@@ -44,3 +44,21 @@ fn nav_url_and_title_are_escaped_for_html_attribute_context() {
     assert!(!out.contains("<Title>"));
     assert!(out.contains("Weird &lt;Title&gt;"));
 }
+
+#[test]
+fn nav_links_are_page_relative_for_nested_pages() {
+    let cfg = SiteConfig { site_name: "Cheatsheet".into(), ..Default::default() };
+    let nav = NavTree(vec![NavNode::Page { title: "Home".into(), url: "index.html".into() }]);
+    // Rendering a page nested one directory deep (e.g. site/cli/tar.html):
+    // the root-relative nav href "index.html" must become "../index.html",
+    // or the link 404s by resolving to site/cli/index.html instead of site/index.html.
+    let page = Page {
+        rel_path: PathBuf::from("cli/tar.md"),
+        url: "cli/tar.html".into(),
+        title: "Tar".into(),
+        html: "<p>hello</p>".into(),
+    };
+    let out = render_page(&cfg, &nav, &page);
+    assert!(out.contains("href=\"../index.html\""));
+    assert!(!out.contains("href=\"index.html\""));
+}
