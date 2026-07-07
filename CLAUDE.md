@@ -40,13 +40,14 @@ crates/
 - Fenced code with syntect highlighting.
 - Frontmatter `title` key only (consume; ignore all other keys).
 - Internal `.md` -> `.html` link rewrite.
-- Heading anchors + per-page TOC.
+- Heading anchors (via comrak `header_ids`).
 - Tree-derived nav (directories become sections, alphabetical, `index.md` first).
 - Title resolution: `frontmatter.title` -> first `# H1` -> humanized filename.
 
 Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
-admonitions, explicit-`nav` config override, the `serve` dev server, host
-rollout. No functionality duplicated from `docgate`: `build` fails only on an
+admonitions, explicit-`nav` config override, **per-page TOC** (deferred to the
+theme-polish pass — heading anchors ship in M1, the rendered TOC does not), the
+`serve` dev server, host rollout. No functionality duplicated from `docgate`: `build` fails only on an
 unresolvable internal link (a render error) — orphan/graph auditing stays
 docgate's.
 
