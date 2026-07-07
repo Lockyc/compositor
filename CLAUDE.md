@@ -6,6 +6,19 @@ A Rust static-site generator for Markdown doc repos, replacing MkDocs across the
 the docs sites. `compositor build <dir>` renders a directory of Markdown into a themed,
 tree-navigated, Pagefind-indexed static HTML site.
 
+**Designed to run unattended.** The sites compositor serves rebuild without a human
+watching a terminal, so the tool must **degrade gracefully on content errors, never
+halt or swallow updates**. This splits the two commands' failure policy:
+
+- **`build`** — the one-shot path a human or CI watches — stays **strict**: an
+  unresolvable internal link is a hard error that fails the build loudly.
+- **`serve`** (M4, not yet built) — the long-running unattended path — is
+  **lenient**: it never halts on a content error. An unresolvable internal link
+  still gets its `.md`→`.html` rewrite (surfacing as an honest 404), the rebuild
+  always succeeds, and the freshest render always swaps in. A single broken link
+  must never freeze the site at a last-good revision and silently swallow every
+  later edit — the worst failure mode for a process no one is monitoring.
+
 ## Current state
 
 Milestone 1 (plain-GFM `build`) is **complete**: `compositor build <dir>` renders a
