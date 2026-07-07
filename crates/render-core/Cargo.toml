@@ -1,0 +1,11 @@
+[package]
+name = "render-core"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+comrak = { version = "0.29", features = ["syntect"] }
+serde = { version = "1", features = ["derive"] }
+serde_yaml = "0.9"
+walkdir = "2"
+anyhow = "1"
