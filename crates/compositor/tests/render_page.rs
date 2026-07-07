@@ -6,8 +6,14 @@ use std::path::PathBuf;
 
 #[test]
 fn page_html_has_title_body_and_nav() {
-    let cfg = SiteConfig { site_name: "Cheatsheet".into(), ..Default::default() };
-    let nav = NavTree(vec![NavNode::Page { title: "Home".into(), url: "index.html".into() }]);
+    let cfg = SiteConfig {
+        site_name: "Cheatsheet".into(),
+        ..Default::default()
+    };
+    let nav = NavTree(vec![NavNode::Page {
+        title: "Home".into(),
+        url: "index.html".into(),
+    }]);
     let page = Page {
         rel_path: PathBuf::from("index.md"),
         url: "index.html".into(),
@@ -23,7 +29,10 @@ fn page_html_has_title_body_and_nav() {
 
 #[test]
 fn nav_url_and_title_are_escaped_for_html_attribute_context() {
-    let cfg = SiteConfig { site_name: "Cheatsheet".into(), ..Default::default() };
+    let cfg = SiteConfig {
+        site_name: "Cheatsheet".into(),
+        ..Default::default()
+    };
     let nav = NavTree(vec![NavNode::Page {
         title: "Weird <Title>".into(),
         url: "a\".x.html".into(),
@@ -47,8 +56,14 @@ fn nav_url_and_title_are_escaped_for_html_attribute_context() {
 
 #[test]
 fn nav_links_are_page_relative_for_nested_pages() {
-    let cfg = SiteConfig { site_name: "Cheatsheet".into(), ..Default::default() };
-    let nav = NavTree(vec![NavNode::Page { title: "Home".into(), url: "index.html".into() }]);
+    let cfg = SiteConfig {
+        site_name: "Cheatsheet".into(),
+        ..Default::default()
+    };
+    let nav = NavTree(vec![NavNode::Page {
+        title: "Home".into(),
+        url: "index.html".into(),
+    }]);
     // Rendering a page nested one directory deep (e.g. site/cli/tar.html):
     // the root-relative nav href "index.html" must become "../index.html",
     // or the link 404s by resolving to site/cli/index.html instead of site/index.html.

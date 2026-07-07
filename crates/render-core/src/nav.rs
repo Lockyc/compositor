@@ -1,9 +1,15 @@
-use std::collections::BTreeMap;
 use crate::site::{humanize_filename, Page};
+use std::collections::BTreeMap;
 
 pub enum NavNode {
-    Page { title: String, url: String },
-    Section { title: String, children: Vec<NavNode> },
+    Page {
+        title: String,
+        url: String,
+    },
+    Section {
+        title: String,
+        children: Vec<NavNode>,
+    },
 }
 
 pub struct NavTree(pub Vec<NavNode>);
@@ -44,7 +50,10 @@ fn render_dir(dir: &mut Dir) -> Vec<NavNode> {
     let mut out = Vec::new();
     dir.files.sort_by(|a, b| a.0.cmp(&b.0));
     for (_, title, url) in &dir.files {
-        out.push(NavNode::Page { title: title.clone(), url: url.clone() });
+        out.push(NavNode::Page {
+            title: title.clone(),
+            url: url.clone(),
+        });
     }
     // Sections: alphabetical by title, case-insensitive (tie-break by raw
     // name for determinism when titles collide case-insensitively).

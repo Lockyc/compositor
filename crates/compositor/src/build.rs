@@ -1,8 +1,8 @@
-use std::path::{Component, Path};
-use anyhow::{anyhow, Context, Result};
-use render_core::site::build_site;
 use crate::config::SiteConfig;
 use crate::render_page::render_page;
+use anyhow::{anyhow, Context, Result};
+use render_core::site::build_site;
+use std::path::{Component, Path};
 
 pub fn run_build(project_dir: &Path) -> Result<()> {
     let cfg_path = project_dir.join("compositor.toml");
@@ -67,7 +67,8 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
 
 fn run_pagefind(out: &Path) {
     match std::process::Command::new("pagefind")
-        .arg("--site").arg(out)
+        .arg("--site")
+        .arg(out)
         .status()
     {
         Ok(s) if s.success() => {}

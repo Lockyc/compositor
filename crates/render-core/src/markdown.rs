@@ -1,9 +1,9 @@
-use comrak::{parse_document, format_html_with_plugins, Arena, Options, Plugins};
-use comrak::plugins::syntect::SyntectAdapter;
+use anyhow::{anyhow, Result};
 use comrak::nodes::{AstNode, NodeValue};
+use comrak::plugins::syntect::SyntectAdapter;
+use comrak::{format_html_with_plugins, parse_document, Arena, Options, Plugins};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use anyhow::{anyhow, Result};
 
 pub struct Rendered {
     pub html: String,
@@ -140,13 +140,19 @@ mod tests {
 
     #[test]
     fn renders_gfm_table() {
-        let r = render_markdown("| a | b |\n|---|---|\n| 1 | 2 |", Path::new(""), &HashSet::new()).unwrap();
+        let r = render_markdown(
+            "| a | b |\n|---|---|\n| 1 | 2 |",
+            Path::new(""),
+            &HashSet::new(),
+        )
+        .unwrap();
         assert!(r.html.contains("<table>"));
     }
 
     #[test]
     fn highlights_fenced_code() {
-        let r = render_markdown("```rust\nfn main() {}\n```", Path::new(""), &HashSet::new()).unwrap();
+        let r =
+            render_markdown("```rust\nfn main() {}\n```", Path::new(""), &HashSet::new()).unwrap();
         // syntect emits inline styles on a <pre>/<code> span structure
         assert!(r.html.contains("style=\"") && r.html.contains("main"));
     }

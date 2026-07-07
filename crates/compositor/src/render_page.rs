@@ -1,7 +1,7 @@
+use crate::config::SiteConfig;
 use askama::Template;
 use render_core::nav::{NavNode, NavTree};
 use render_core::site::Page;
-use crate::config::SiteConfig;
 
 pub const STYLE_CSS: &str = include_str!("../assets/style.css");
 
@@ -36,7 +36,9 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
 
 fn nav_to_html(nav: &NavTree, prefix: &str) -> String {
     let mut s = String::from("<ul>");
-    for node in &nav.0 { node_html(node, prefix, &mut s); }
+    for node in &nav.0 {
+        node_html(node, prefix, &mut s);
+    }
     s.push_str("</ul>");
     s
 }
@@ -51,8 +53,13 @@ fn node_html(node: &NavNode, prefix: &str, s: &mut String) {
             ));
         }
         NavNode::Section { title, children } => {
-            s.push_str(&format!("<li class=\"section\"><span>{}</span><ul>", html_escape(title)));
-            for c in children { node_html(c, prefix, s); }
+            s.push_str(&format!(
+                "<li class=\"section\"><span>{}</span><ul>",
+                html_escape(title)
+            ));
+            for c in children {
+                node_html(c, prefix, s);
+            }
             s.push_str("</ul></li>");
         }
     }

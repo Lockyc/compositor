@@ -26,7 +26,11 @@ fn build_rejects_out_dir_that_would_delete_the_project() {
     fs::create_dir_all(tmp.join("docs")).unwrap();
     // A misconfigured out_dir of "." normalizes to the project dir itself;
     // remove_dir_all(out) on it would wipe the source tree (including docs/).
-    fs::write(tmp.join("compositor.toml"), "site_name = \"Test\"\nout_dir = \".\"\n").unwrap();
+    fs::write(
+        tmp.join("compositor.toml"),
+        "site_name = \"Test\"\nout_dir = \".\"\n",
+    )
+    .unwrap();
     fs::write(tmp.join("docs/index.md"), "# Home").unwrap();
 
     let result = run_build(&tmp);

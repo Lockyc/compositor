@@ -1,4 +1,4 @@
-use render_core::nav::{NavNode, tree_from_pages};
+use render_core::nav::{tree_from_pages, NavNode};
 use render_core::site::Page;
 use std::path::PathBuf;
 
@@ -33,10 +33,13 @@ fn sections_from_dirs_index_first_then_alpha() {
         NavNode::Section { title, children } => {
             assert_eq!(title, "Cli");
             // index first, then alpha: CLI Home, Bash, Tar
-            let titles: Vec<_> = children.iter().map(|c| match c {
-                NavNode::Page { title, .. } => title.clone(),
-                _ => "SECTION".into(),
-            }).collect();
+            let titles: Vec<_> = children
+                .iter()
+                .map(|c| match c {
+                    NavNode::Page { title, .. } => title.clone(),
+                    _ => "SECTION".into(),
+                })
+                .collect();
             assert_eq!(titles, vec!["CLI Home", "Bash", "Tar"]);
         }
         _ => panic!("expected section second"),
@@ -61,20 +64,27 @@ fn sections_and_pages_order_case_insensitively() {
     let tree = tree_from_pages(&pages);
 
     // Top level: two sections, "Apple" then "Zoo" (case-insensitive alpha).
-    let section_titles: Vec<_> = tree.0.iter().map(|n| match n {
-        NavNode::Section { title, .. } => title.clone(),
-        NavNode::Page { title, .. } => title.clone(),
-    }).collect();
+    let section_titles: Vec<_> = tree
+        .0
+        .iter()
+        .map(|n| match n {
+            NavNode::Section { title, .. } => title.clone(),
+            NavNode::Page { title, .. } => title.clone(),
+        })
+        .collect();
     assert_eq!(section_titles, vec!["Apple", "Zoo"]);
 
     match &tree.0[0] {
         NavNode::Section { title, children } => {
             assert_eq!(title, "Apple");
             // index first, then alpha case-insensitive: bike, Car.
-            let titles: Vec<_> = children.iter().map(|c| match c {
-                NavNode::Page { title, .. } => title.clone(),
-                _ => "SECTION".into(),
-            }).collect();
+            let titles: Vec<_> = children
+                .iter()
+                .map(|c| match c {
+                    NavNode::Page { title, .. } => title.clone(),
+                    _ => "SECTION".into(),
+                })
+                .collect();
             assert_eq!(titles, vec!["Apple Home", "bike", "Car"]);
         }
         _ => panic!("expected Apple section first"),
@@ -98,9 +108,13 @@ fn section_order_requires_case_folding_not_just_humanized_title() {
     ];
     let tree = tree_from_pages(&pages);
 
-    let section_titles: Vec<_> = tree.0.iter().map(|n| match n {
-        NavNode::Section { title, .. } => title.clone(),
-        NavNode::Page { title, .. } => title.clone(),
-    }).collect();
+    let section_titles: Vec<_> = tree
+        .0
+        .iter()
+        .map(|n| match n {
+            NavNode::Section { title, .. } => title.clone(),
+            NavNode::Page { title, .. } => title.clone(),
+        })
+        .collect();
     assert_eq!(section_titles, vec!["Ab", "AB"]);
 }

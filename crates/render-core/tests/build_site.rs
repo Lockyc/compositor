@@ -16,7 +16,12 @@ fn title_prefers_frontmatter_then_h1_then_filename() {
     write(&tmp, "cli/git-repos.md", "plain body, no heading");
 
     let site = build_site(&tmp).unwrap();
-    let by = |name: &str| site.pages.iter().find(|p| p.rel_path.ends_with(name)).unwrap();
+    let by = |name: &str| {
+        site.pages
+            .iter()
+            .find(|p| p.rel_path.ends_with(name))
+            .unwrap()
+    };
 
     assert_eq!(by("a.md").title, "From FM");
     assert_eq!(by("b.md").title, "From Heading");

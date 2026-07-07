@@ -14,6 +14,10 @@ pub struct SiteConfig {
 }
 
 impl SiteConfig {
-    pub fn docs_dir(&self) -> &str { self.docs_dir.as_deref().unwrap_or("docs") }
-    pub fn out_dir(&self) -> &str { self.out_dir.as_deref().unwrap_or("site") }
+    pub fn docs_dir(&self) -> &str {
+        self.docs_dir.as_deref().unwrap_or("docs")
+    }
+    pub fn out_dir(&self) -> &str {
+        self.out_dir.as_deref().unwrap_or("site")
+    }
 }

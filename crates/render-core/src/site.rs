@@ -1,5 +1,5 @@
-use std::path::{Path, PathBuf};
 use anyhow::Result;
+use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::frontmatter::split_frontmatter;
@@ -53,10 +53,7 @@ pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
         let raw = std::fs::read_to_string(path)?;
         let (fm, body) = split_frontmatter(&raw);
         let rel = path.strip_prefix(docs_dir)?.to_path_buf();
-        let page_dir = rel
-            .parent()
-            .unwrap_or_else(|| Path::new(""))
-            .to_path_buf();
+        let page_dir = rel.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
         let stem = path
             .file_stem()
             .and_then(|s| s.to_str())
