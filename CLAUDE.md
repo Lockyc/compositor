@@ -29,7 +29,9 @@ copy of non-Markdown assets, and an optional Pagefind index.
 Milestone 4 (the `serve` dev server) is also **complete**: `compositor serve`
 watches the docs tree, rebuilds in memory on change (via the lenient link policy
 described in Purpose above), serves the result over `tiny_http`, and live-reloads
-every viewer's browser by polling a `/__reload` epoch endpoint.
+every viewer's browser by polling a `/__reload` epoch endpoint. `serve`'s accepted
+limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
+— read it before extending `serve`.
 
 Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
 `[[wikilinks]]` + frontmatter-driven KB titles (M3); host rollout, retiring
