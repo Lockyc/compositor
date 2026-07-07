@@ -1,3 +1,5 @@
+pub mod frontmatter;
+
 pub fn hello() -> &'static str {
     "render-core"
 }
