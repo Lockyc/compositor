@@ -8,9 +8,15 @@ tree-navigated, Pagefind-searchable static HTML site.
 
 ## Current state
 
-Milestone 1 (plain-GFM `build`) in progress. This commit is the initial workspace
-scaffold: a compiling two-crate workspace with a temporary smoke symbol
-(`render_core::hello()`), no real rendering yet.
+Milestone 1 (plain-GFM `build`) is **complete** and passes the cheatsheet bake-off
+(2026-07-07): 42 pages rendered with correct titles, case-insensitive sorted tree
+nav, `.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, and
+optional Pagefind. `compositor build <dir>` works end to end.
+
+Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
+`[[wikilinks]]` + frontmatter-driven KB titles (M3); the `serve` dev server (M4);
+host rollout, retiring `mkdocs-base` (M5). Known divergence from MkDocs: filenames
+with spaces produce spaces in URLs (functional; slugification is a deferred decision).
 
 ## Layout
 
