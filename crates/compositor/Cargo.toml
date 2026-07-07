@@ -3,6 +3,10 @@ name = "compositor"
 version.workspace = true
 edition.workspace = true
 
+[lib]
+name = "compositor"
+path = "src/lib.rs"
+
 [[bin]]
 name = "compositor"
 path = "src/main.rs"
