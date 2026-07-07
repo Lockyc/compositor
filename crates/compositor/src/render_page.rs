@@ -27,7 +27,7 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
     .expect("template render is infallible")
 }
 
-pub fn nav_to_html(nav: &NavTree) -> String {
+fn nav_to_html(nav: &NavTree) -> String {
     let mut s = String::from("<ul>");
     for node in &nav.0 { node_html(node, &mut s); }
     s.push_str("</ul>");
@@ -37,7 +37,11 @@ pub fn nav_to_html(nav: &NavTree) -> String {
 fn node_html(node: &NavNode, s: &mut String) {
     match node {
         NavNode::Page { title, url } => {
-            s.push_str(&format!("<li><a href=\"{url}\">{}</a></li>", html_escape(title)));
+            s.push_str(&format!(
+                "<li><a href=\"{}\">{}</a></li>",
+                html_escape(url),
+                html_escape(title)
+            ));
         }
         NavNode::Section { title, children } => {
             s.push_str(&format!("<li class=\"section\"><span>{}</span><ul>", html_escape(title)));
@@ -48,5 +52,8 @@ fn node_html(node: &NavNode, s: &mut String) {
 }
 
 fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;").replace('<', "&lt;").replace('>', "&gt;")
+    s.replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
 }
