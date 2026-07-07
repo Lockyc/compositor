@@ -1,6 +1,7 @@
 use crate::config::SiteConfig;
 use crate::render_page::render_page;
 use anyhow::{anyhow, Result};
+use notify::{RecursiveMode, Watcher};
 use render_core::site::{build_site, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashMap;
@@ -136,6 +137,61 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     );
 }
 
+/// One rebuild cycle: re-render leniently, swap the page map, bump the epoch.
+/// A content error is impossible under the lenient policy; an IO race (a file
+/// deleted between walk and read) logs and leaves the last-good map live — the
+/// next filesystem event retries. Never crashes, never swallows a good build.
+fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path) {
+    match build_site(docs, LinkPolicy::Lenient) {
+        Ok(site) => {
+            let pages = build_pages(cfg, &site);
+            let mut s = state.write().expect("state lock");
+            s.pages = pages;
+            s.epoch += 1;
+        }
+        Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
+    }
+}
+
+/// Watch `docs` and rebuild on change. A burst of editor saves is debounced
+/// into a single rebuild by draining the event channel over a ~200ms quiet
+/// window before rebuilding.
+fn spawn_watcher(state: Arc<RwLock<ServedSite>>, cfg: SiteConfig, docs: PathBuf) {
+    std::thread::spawn(move || {
+        let (tx, rx) = std::sync::mpsc::channel();
+        let mut watcher =
+            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+                if res.is_ok() {
+                    let _ = tx.send(());
+                }
+            }) {
+                Ok(w) => w,
+                Err(e) => {
+                    eprintln!("file watcher init failed, live-reload disabled: {e}");
+                    return;
+                }
+            };
+        if let Err(e) = watcher.watch(&docs, RecursiveMode::Recursive) {
+            eprintln!(
+                "watching {} failed, live-reload disabled: {e}",
+                docs.display()
+            );
+            return;
+        }
+        loop {
+            // Block until the first event, then drain the quiet window.
+            if rx.recv().is_err() {
+                break;
+            }
+            while rx
+                .recv_timeout(std::time::Duration::from_millis(200))
+                .is_ok()
+            {}
+            rebuild_into(&state, &cfg, &docs);
+        }
+    });
+}
+
 pub(crate) fn serve_loop(server: Server, state: Arc<RwLock<ServedSite>>, docs: PathBuf) {
     for req in server.incoming_requests() {
         handle(req, &state, &docs);
@@ -165,8 +221,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: u16, open: bool) -> Resul
         epoch: 0,
     }));
 
-    // Task 3 wires the watcher here:
-    // spawn_watcher(Arc::clone(&state), cfg, docs.clone());
+    spawn_watcher(Arc::clone(&state), cfg, docs.clone());
 
     let server = Server::http(format!("{host}:{port}"))
         .map_err(|e| anyhow!("binding {host}:{port}: {e}"))?;
@@ -253,5 +308,38 @@ mod tests {
         let reload = get(addr, "/__reload");
         assert!(reload.contains("200 OK"));
         assert!(reload.trim_end().ends_with('0')); // epoch 0
+    }
+
+    #[test]
+    fn rebuild_bumps_epoch_and_swaps_content() {
+        let tmp = std::env::temp_dir().join(format!("compositor-serve-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("index.md"), "# One").unwrap();
+
+        let cfg = SiteConfig {
+            site_name: "T".to_string(),
+            docs_dir: Some("docs".to_string()),
+            ..Default::default()
+        };
+        let site = build_site(&docs, LinkPolicy::Lenient).unwrap();
+        let state = RwLock::new(ServedSite {
+            pages: build_pages(&cfg, &site),
+            epoch: 0,
+        });
+        assert!(state.read().unwrap().pages["index.html"].contains("One"));
+
+        // A change lands; one rebuild must swap content and advance the epoch.
+        std::fs::write(docs.join("index.md"), "# Two").unwrap();
+        rebuild_into(&state, &cfg, &docs);
+
+        {
+            let s = state.read().unwrap();
+            assert_eq!(s.epoch, 1);
+            assert!(s.pages["index.html"].contains("Two"));
+            assert!(!s.pages["index.html"].contains("One"));
+        }
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
