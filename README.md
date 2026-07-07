@@ -14,10 +14,13 @@ reusable render engine (`render-core`) that a future desktop viewer can embed.
 
 **Work in progress.** Milestone 1 (`compositor build`) is complete: plain-GFM
 Markdown → themed, tree-navigated, Pagefind-indexed static HTML, with non-Markdown
-assets copied through, verified end to end against a real 42-page docs site. Not yet
-built: `!!!` admonitions, `[[wikilinks]]`, a `serve` dev server, and the theme-polish
-pass — which adds a per-page TOC and the Pagefind **search box** (the index is built
-now; the UI is not). See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
+assets copied through, verified end to end against a real 42-page docs site.
+Milestone 4 (`compositor serve`) is also complete: a live-reload dev server that
+watches the docs tree, rebuilds in memory on every change, and refreshes every
+open browser tab automatically. Not yet built: `!!!` admonitions, `[[wikilinks]]`,
+and the theme-polish pass — which adds a per-page TOC and the Pagefind **search
+box** (the index is built now; the UI is not). See [`CLAUDE.md`](CLAUDE.md) for
+the full render surface and roadmap.
 
 ## Build & use
 
@@ -30,6 +33,16 @@ The project directory needs a `compositor.toml` setting `site_name` (optionally
 `site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`]).
 The rendered site lands in `out_dir`; if the `pagefind` binary is on PATH it is
 invoked automatically to build the search index.
+
+For local editing, `serve` watches the docs tree and live-reloads the browser on
+every change:
+
+```sh
+./target/release/compositor serve --dir path/to/docs-repo --open
+```
+
+(`--host` and `--port` default to `127.0.0.1:8000`; `--open` launches the default
+browser.)
 
 ## Development
 

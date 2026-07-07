@@ -12,7 +12,7 @@ halt or swallow updates**. This splits the two commands' failure policy:
 
 - **`build`** — the one-shot path a human or CI watches — stays **strict**: an
   unresolvable internal link is a hard error that fails the build loudly.
-- **`serve`** (M4, not yet built) — the long-running unattended path — is
+- **`serve`** — the long-running unattended path — is
   **lenient**: it never halts on a content error. An unresolvable internal link
   still gets its `.md`→`.html` rewrite (surfacing as an honest 404), the rebuild
   always succeeds, and the freshest render always swaps in. A single broken link
@@ -26,9 +26,14 @@ Markdown tree end to end — correct titles, case-insensitive sorted tree nav,
 `.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, verbatim
 copy of non-Markdown assets, and an optional Pagefind index.
 
+Milestone 4 (the `serve` dev server) is also **complete**: `compositor serve`
+watches the docs tree, rebuilds in memory on change (via the lenient link policy
+described in Purpose above), serves the result over `tiny_http`, and live-reloads
+every viewer's browser by polling a `/__reload` epoch endpoint.
+
 Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
-`[[wikilinks]]` + frontmatter-driven KB titles (M3); the `serve` dev server (M4);
-host rollout, retiring `mkdocs-base` (M5). The Pagefind **search UI** (an input box
+`[[wikilinks]]` + frontmatter-driven KB titles (M3); host rollout, retiring
+`mkdocs-base` (M5). The Pagefind **search UI** (an input box
 wired to `pagefind-ui`) is deferred to the theme-polish pass: the search index is
 built now, but the rendered pages carry no search box yet. Known divergence from
 MkDocs: filenames with spaces produce spaces in URLs (functional; slugification is a
@@ -90,4 +95,5 @@ moves.
 
 - Build: `cargo build`
 - Test: `cargo test`
+- Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`, `--port 8000`, `--open`)
 - Pre-merge gate: `just gate` (fmt-check + clippy + tests)
