@@ -46,7 +46,15 @@ fn render_dir(dir: &mut Dir) -> Vec<NavNode> {
     for (_, title, url) in &dir.files {
         out.push(NavNode::Page { title: title.clone(), url: url.clone() });
     }
-    for (name, sub) in dir.subdirs.iter_mut() {
+    // Sections: alphabetical by title, case-insensitive (tie-break by raw
+    // name for determinism when titles collide case-insensitively).
+    let mut subdirs: Vec<(&String, &mut Dir)> = dir.subdirs.iter_mut().collect();
+    subdirs.sort_by(|(a_name, _), (b_name, _)| {
+        let a_key = humanize_filename(a_name).to_lowercase();
+        let b_key = humanize_filename(b_name).to_lowercase();
+        a_key.cmp(&b_key).then_with(|| a_name.cmp(b_name))
+    });
+    for (name, sub) in subdirs {
         out.push(NavNode::Section {
             title: humanize_filename(name),
             children: render_dir(sub),
