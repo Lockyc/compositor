@@ -41,7 +41,9 @@ fn url_for(rel: &Path) -> String {
 }
 
 pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
-    let mut pages = Vec::new();
+    // Pass 1: collect page metadata + known urls.
+    let mut raws = Vec::new(); // (rel, page_dir, stem, fm_title, body)
+    let mut known_urls = std::collections::HashSet::new();
     for entry in WalkDir::new(docs_dir).sort_by_file_name() {
         let entry = entry?;
         let path = entry.path();
@@ -50,13 +52,26 @@ pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
         }
         let raw = std::fs::read_to_string(path)?;
         let (fm, body) = split_frontmatter(&raw);
-        let rendered = render_markdown(&body);
         let rel = path.strip_prefix(docs_dir)?.to_path_buf();
-        let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("page");
-        let title = fm
-            .title
+        let page_dir = rel
+            .parent()
+            .unwrap_or_else(|| Path::new(""))
+            .to_path_buf();
+        let stem = path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("page")
+            .to_string();
+        known_urls.insert(url_for(&rel));
+        raws.push((rel, page_dir, stem, fm.title, body));
+    }
+    // Pass 2: render (links now resolvable).
+    let mut pages = Vec::new();
+    for (rel, page_dir, stem, fm_title, body) in raws {
+        let rendered = render_markdown(&body, &page_dir, &known_urls)?;
+        let title = fm_title
             .or(rendered.first_h1)
-            .unwrap_or_else(|| humanize_filename(stem));
+            .unwrap_or_else(|| humanize_filename(&stem));
         pages.push(Page {
             url: url_for(&rel),
             rel_path: rel,
