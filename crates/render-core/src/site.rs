@@ -4,6 +4,7 @@ use walkdir::WalkDir;
 
 use crate::frontmatter::split_frontmatter;
 use crate::markdown::render_markdown;
+use crate::nav::{tree_from_pages, NavTree};
 
 pub struct Page {
     pub rel_path: PathBuf,
@@ -14,6 +15,7 @@ pub struct Page {
 
 pub struct SiteModel {
     pub pages: Vec<Page>,
+    pub nav: NavTree,
 }
 
 pub fn humanize_filename(stem: &str) -> String {
@@ -62,5 +64,6 @@ pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
             html: rendered.html,
         });
     }
-    Ok(SiteModel { pages })
+    let nav = tree_from_pages(&pages);
+    Ok(SiteModel { pages, nav })
 }
