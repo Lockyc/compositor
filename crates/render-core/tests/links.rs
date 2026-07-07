@@ -26,3 +26,22 @@ fn errors_on_unresolvable_internal_link() {
     let err = render_markdown("[gone](missing.md)", Path::new("cli"), &known);
     assert!(err.is_err());
 }
+
+#[test]
+fn rewrites_dotdot_relative_link_using_original_relative_path() {
+    // known_urls uses the normalized/joined form ("cli/other.html"), but the
+    // emitted href must stay relative to the page ("../other.html"), not the
+    // normalized/joined path. This distinguishes emit-relative (correct) from
+    // emit-normalized (the prior buggy behavior).
+    let known = urls(&["cli/other.html"]);
+    let r = render_markdown("[o](../other.md)", Path::new("cli/sub"), &known).unwrap();
+    assert!(r.html.contains("href=\"../other.html\""));
+    assert!(!r.html.contains("href=\"cli/other.html\""));
+}
+
+#[test]
+fn preserves_anchor_fragment_on_rewritten_link() {
+    let known = urls(&["cli/tar.html"]);
+    let r = render_markdown("[s](tar.md#sec)", Path::new("cli"), &known).unwrap();
+    assert!(r.html.contains("href=\"tar.html#sec\""));
+}
