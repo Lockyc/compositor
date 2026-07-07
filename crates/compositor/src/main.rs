@@ -15,10 +15,27 @@ enum Command {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
+    /// Serve the site with live-reload, rebuilding on change.
+    Serve {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        #[arg(long, default_value = "127.0.0.1")]
+        host: String,
+        #[arg(long, default_value_t = 8000)]
+        port: u16,
+        #[arg(long)]
+        open: bool,
+    },
 }
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
         Command::Build { dir } => compositor::build::run_build(&dir),
+        Command::Serve {
+            dir,
+            host,
+            port,
+            open,
+        } => compositor::serve::run_serve(&dir, &host, port, open),
     }
 }
