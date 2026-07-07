@@ -16,33 +16,46 @@ pub(crate) struct ServedSite {
     pub(crate) epoch: u64,
 }
 
-const RELOAD_SCRIPT: &str = r#"<script>
-(function () {
-  var e = null;
-  setInterval(function () {
-    fetch('/__reload').then(function (r) { return r.text(); }).then(function (t) {
-      if (e === null) { e = t; return; }
-      if (t !== e) { location.reload(); }
-    }).catch(function () {});
-  }, 250);
-})();
-</script>"#;
+/// The client script, baselined at the epoch the page was built at (not the
+/// first `/__reload` poll response) — otherwise a reload that lands between
+/// page load and the first poll gets swallowed: see module docs.
+fn reload_script(epoch: u64) -> String {
+    format!(
+        r#"<script>
+(function () {{
+  var e = "{epoch}";
+  setInterval(function () {{
+    fetch('/__reload').then(function (r) {{ return r.text(); }}).then(function (t) {{
+      if (t !== e) {{ location.reload(); }}
+    }}).catch(function () {{}});
+  }}, 250);
+}})();
+</script>"#
+    )
+}
 
-fn inject_reload(html: &str) -> String {
+fn inject_reload(html: &str, epoch: u64) -> String {
+    let script = reload_script(epoch);
     match html.rfind("</body>") {
-        Some(i) => format!("{}{}{}", &html[..i], RELOAD_SCRIPT, &html[i..]),
-        None => format!("{html}{RELOAD_SCRIPT}"),
+        Some(i) => format!("{}{}{}", &html[..i], script, &html[i..]),
+        None => format!("{html}{script}"),
     }
 }
 
 /// Render every page and inject the reload script — the map the server sends.
-pub(crate) fn build_pages(cfg: &SiteConfig, site: &SiteModel) -> HashMap<String, String> {
+/// `epoch` is baked into each page as the client's baseline, so it must equal
+/// the epoch `/__reload` will report for this build (see `rebuild_into`).
+pub(crate) fn build_pages(
+    cfg: &SiteConfig,
+    site: &SiteModel,
+    epoch: u64,
+) -> HashMap<String, String> {
     site.pages
         .iter()
         .map(|p| {
             (
                 p.url.clone(),
-                inject_reload(&render_page(cfg, &site.nav, p)),
+                inject_reload(&render_page(cfg, &site.nav, p), epoch),
             )
         })
         .collect()
@@ -141,13 +154,19 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
 /// A content error is impossible under the lenient policy; an IO race (a file
 /// deleted between walk and read) logs and leaves the last-good map live — the
 /// next filesystem event retries. Never crashes, never swallows a good build.
+///
+/// `build_pages` (the expensive render work) runs outside the write lock —
+/// only the single watcher thread ever calls this, so read-then-write is
+/// race-free — and the write-guard critical section is limited to the two
+/// assignments so a panic during rendering can't poison the lock.
 fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path) {
     match build_site(docs, LinkPolicy::Lenient) {
         Ok(site) => {
-            let pages = build_pages(cfg, &site);
+            let next_epoch = state.read().expect("state lock").epoch + 1;
+            let pages = build_pages(cfg, &site, next_epoch);
             let mut s = state.write().expect("state lock");
             s.pages = pages;
-            s.epoch += 1;
+            s.epoch = next_epoch;
         }
         Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
     }
@@ -217,7 +236,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: u16, open: bool) -> Resul
 
     let site = build_site(&docs, LinkPolicy::Lenient)?;
     let state = Arc::new(RwLock::new(ServedSite {
-        pages: build_pages(&cfg, &site),
+        pages: build_pages(&cfg, &site, 0),
         epoch: 0,
     }));
 
@@ -258,13 +277,26 @@ mod tests {
 
     #[test]
     fn inject_reload_inserts_once_before_body_close() {
-        let out = inject_reload("<body>hi</body>");
+        let out = inject_reload("<body>hi</body>", 0);
         assert!(out.contains("/__reload"));
         assert!(out.contains("hi"));
         // The script is spliced in immediately before "</body>", so the
         // original closing tag is untouched and still ends the output.
         assert!(out.ends_with("</body>"));
         assert_eq!(out.matches("/__reload").count(), 1);
+    }
+
+    #[test]
+    fn inject_reload_bakes_the_build_epoch_as_baseline() {
+        // The baseline must be the page's build epoch, not "unset" — a stale
+        // first-poll baseline (the bug this guards against) would swallow an
+        // edit that lands between page load and the first /__reload poll.
+        let out = inject_reload("<body>hi</body>", 7);
+        assert!(out.contains(r#"var e = "7""#), "script: {out}");
+        assert!(
+            !out.contains("=== null"),
+            "no first-poll baseline logic: {out}"
+        );
     }
 
     #[test]
@@ -278,7 +310,7 @@ mod tests {
         let mut pages = HashMap::new();
         pages.insert(
             "index.html".to_string(),
-            inject_reload("<body>Hello</body>"),
+            inject_reload("<body>Hello</body>", 0),
         );
         Arc::new(RwLock::new(ServedSite { pages, epoch: 0 }))
     }
@@ -325,7 +357,7 @@ mod tests {
         };
         let site = build_site(&docs, LinkPolicy::Lenient).unwrap();
         let state = RwLock::new(ServedSite {
-            pages: build_pages(&cfg, &site),
+            pages: build_pages(&cfg, &site, 0),
             epoch: 0,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
@@ -339,6 +371,14 @@ mod tests {
             assert_eq!(s.epoch, 1);
             assert!(s.pages["index.html"].contains("Two"));
             assert!(!s.pages["index.html"].contains("One"));
+            // The served page's baked baseline must agree with the new epoch
+            // that /__reload will report — this is the invariant the bug
+            // broke (baseline from the first poll, not the build epoch).
+            assert!(
+                s.pages["index.html"].contains(r#"var e = "1""#),
+                "page: {}",
+                s.pages["index.html"]
+            );
         }
         std::fs::remove_dir_all(&tmp).ok();
     }
