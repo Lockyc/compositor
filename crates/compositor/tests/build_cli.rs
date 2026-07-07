@@ -20,6 +20,32 @@ fn build_writes_html_files() {
 }
 
 #[test]
+fn build_copies_non_markdown_assets_into_the_site() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-assets-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs/img")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"Test\"\n").unwrap();
+    // A page that references an image, plus the image itself and a downloadable
+    // asset. Without copying, the rendered <img>/link would 404 in the site.
+    fs::write(tmp.join("docs/index.md"), "# Home\n\n![logo](img/logo.png)").unwrap();
+    fs::write(tmp.join("docs/img/logo.png"), b"\x89PNG fake bytes").unwrap();
+    fs::write(tmp.join("docs/data.csv"), "a,b\n1,2\n").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    // The image is copied verbatim (bytes preserved) at its mirrored path.
+    assert_eq!(
+        fs::read(tmp.join("site/img/logo.png")).unwrap(),
+        b"\x89PNG fake bytes"
+    );
+    // Any non-.md file is copied, not just images.
+    assert!(tmp.join("site/data.csv").exists());
+    // Markdown is rendered to HTML, never copied verbatim.
+    assert!(!tmp.join("site/index.md").exists());
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
 fn build_rejects_out_dir_that_would_delete_the_project() {
     let tmp = std::env::temp_dir().join(format!("compositor-build-outdir-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);

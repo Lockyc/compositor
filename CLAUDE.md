@@ -4,19 +4,22 @@
 
 A Rust static-site generator for Markdown doc repos, replacing MkDocs across the
 the docs sites. `compositor build <dir>` renders a directory of Markdown into a themed,
-tree-navigated, Pagefind-searchable static HTML site.
+tree-navigated, Pagefind-indexed static HTML site.
 
 ## Current state
 
-Milestone 1 (plain-GFM `build`) is **complete** and passes the cheatsheet bake-off
-(2026-07-07): 42 pages rendered with correct titles, case-insensitive sorted tree
-nav, `.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, and
-optional Pagefind. `compositor build <dir>` works end to end.
+Milestone 1 (plain-GFM `build`) is **complete**: `compositor build <dir>` renders a
+Markdown tree end to end — correct titles, case-insensitive sorted tree nav,
+`.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, verbatim
+copy of non-Markdown assets, and an optional Pagefind index.
 
 Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
 `[[wikilinks]]` + frontmatter-driven KB titles (M3); the `serve` dev server (M4);
-host rollout, retiring `mkdocs-base` (M5). Known divergence from MkDocs: filenames
-with spaces produce spaces in URLs (functional; slugification is a deferred decision).
+host rollout, retiring `mkdocs-base` (M5). The Pagefind **search UI** (an input box
+wired to `pagefind-ui`) is deferred to the theme-polish pass: the search index is
+built now, but the rendered pages carry no search box yet. Known divergence from
+MkDocs: filenames with spaces produce spaces in URLs (functional; slugification is a
+deferred decision).
 
 ## Layout
 
@@ -43,15 +46,35 @@ crates/
 - Heading anchors (via comrak `header_ids`).
 - Tree-derived nav (directories become sections, alphabetical, `index.md` first).
 - Title resolution: `frontmatter.title` -> first `# H1` -> humanized filename.
+- Non-Markdown files in the docs dir copied verbatim into the output, mirroring
+  their relative path (images, downloads, data files a page links to), so those
+  references resolve in the built site — as MkDocs does.
 
 Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
-admonitions, explicit-`nav` config override, **per-page TOC** (deferred to the
-theme-polish pass — heading anchors ship in M1, the rendered TOC does not), the
-`serve` dev server, host rollout. No functionality duplicated from `docgate`: `build` fails only on an
+admonitions, explicit-`nav` config override, **per-page TOC** and the **Pagefind
+search UI** (both deferred to the theme-polish pass — heading anchors and the search
+*index* ship in M1, the rendered TOC and search box do not), the `serve` dev server,
+host rollout. No functionality duplicated from `docgate`: `build` fails only on an
 unresolvable internal link (a render error) — orphan/graph auditing stays
 docgate's.
+
+## Branching & releases
+
+Two long-lived branches: **`dev`** (the integration trunk — all work lands here) and
+**`main`** (the release branch and public face, kept a clean ancestor of `dev` at
+rest). Never commit code directly to `main`; it advances only by fast-forwarding to a
+release commit. A documentation-only change may land on `main` directly and is then
+forward-merged into `dev` so `dev ⊇ main` holds.
+
+The version source of truth is the workspace `version` in the root `Cargo.toml`; the
+binary self-reports it (`compositor --version`, via clap) and the `v<version>` git tag
+matches it exactly — never restate the literal elsewhere. A shipped bump is a **GitHub
+release** (bump the version, tag `v<version>` on the release commit, publish notes
+summarising what shipped), never a bare tag. Still `0.x` while the CLI/config surface
+moves.
 
 ## Commands
 
 - Build: `cargo build`
 - Test: `cargo test`
+- Pre-merge gate: `just gate` (fmt-check + clippy + tests)

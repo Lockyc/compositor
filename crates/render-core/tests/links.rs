@@ -40,6 +40,18 @@ fn rewrites_dotdot_relative_link_using_original_relative_path() {
 }
 
 #[test]
+fn only_the_trailing_md_extension_is_swapped_not_earlier_occurrences() {
+    // A filename that itself contains ".md" before the real extension. url_for
+    // strips only the trailing ".md" (-> "notes.md.html"), so link rewriting
+    // must do the same: an all-occurrences replace would compute
+    // "notes.html.html", mismatch the known url, and wrongly error the link as
+    // unresolvable — and even if resolved, emit a corrupted href.
+    let known = urls(&["notes.md.html"]);
+    let r = render_markdown("[n](notes.md.md)", Path::new(""), &known).unwrap();
+    assert!(r.html.contains("href=\"notes.md.html\""));
+}
+
+#[test]
 fn preserves_anchor_fragment_on_rewritten_link() {
     let known = urls(&["cli/tar.html"]);
     let r = render_markdown("[s](tar.md#sec)", Path::new("cli"), &known).unwrap();

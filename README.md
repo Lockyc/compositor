@@ -1,7 +1,7 @@
 # compositor
 
 A Rust static-site generator for Markdown doc repos: point it at a directory of
-Markdown and get a themed, navigable, searchable static site. Built as a
+Markdown and get a themed, navigable, search-indexed static site. Built as a
 from-scratch replacement for MkDocs across the the docs documentation sites, and as a
 reusable render engine (`render-core`) that a future desktop viewer can embed.
 
@@ -13,10 +13,11 @@ reusable render engine (`render-core`) that a future desktop viewer can embed.
 ## Status
 
 **Work in progress.** Milestone 1 (`compositor build`) is complete: plain-GFM
-Markdown → themed, tree-navigated, Pagefind-indexed static HTML, verified end to end
-against a real 42-page docs site. Not yet built: `!!!` admonitions, `[[wikilinks]]`,
-a `serve` dev server, and the theme-polish pass (including a per-page TOC). See
-[`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
+Markdown → themed, tree-navigated, Pagefind-indexed static HTML, with non-Markdown
+assets copied through, verified end to end against a real 42-page docs site. Not yet
+built: `!!!` admonitions, `[[wikilinks]]`, a `serve` dev server, and the theme-polish
+pass — which adds a per-page TOC and the Pagefind **search box** (the index is built
+now; the UI is not). See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
 
 ## Build & use
 

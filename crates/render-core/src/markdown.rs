@@ -80,7 +80,7 @@ fn rewrite_link(url: &str, page_dir: &Path, known: &HashSet<String>) -> Result<O
     // to validate the link against the known (site-root-relative) urls.
     let joined = page_dir.join(path_part);
     let normalized = normalize(&joined);
-    let resolved_target = normalized.to_string_lossy().replace(".md", ".html");
+    let resolved_target = md_ext_to_html(&normalized.to_string_lossy());
     if !known.contains(&resolved_target) {
         return Err(anyhow!(
             "unresolvable internal link: {url} (from {})",
@@ -89,11 +89,21 @@ fn rewrite_link(url: &str, page_dir: &Path, known: &HashSet<String>) -> Result<O
     }
     // The emitted href stays relative to the page (only the extension
     // changes) — we don't want to rewrite "tar.md" into "cli/tar.html".
-    let new_path = path_part.replace(".md", ".html");
+    let new_path = md_ext_to_html(path_part);
     Ok(Some(match frag {
         Some(f) => format!("{new_path}#{f}"),
         None => new_path,
     }))
+}
+
+/// Swap a *trailing* `.md` for `.html`, leaving any earlier `.md` substring
+/// intact — mirroring `site::url_for`'s `strip_suffix(".md")`. An
+/// all-occurrences replace would corrupt a path like `notes.md.md`.
+fn md_ext_to_html(path: &str) -> String {
+    match path.strip_suffix(".md") {
+        Some(stem) => format!("{stem}.html"),
+        None => path.to_string(),
+    }
 }
 
 fn normalize(p: &Path) -> PathBuf {

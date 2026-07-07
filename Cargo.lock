@@ -256,6 +256,7 @@ dependencies = [
  "render-core",
  "serde",
  "toml",
+ "walkdir",
 ]
 
 [[package]]

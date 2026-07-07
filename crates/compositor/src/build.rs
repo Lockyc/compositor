@@ -3,6 +3,7 @@ use crate::render_page::render_page;
 use anyhow::{anyhow, Context, Result};
 use render_core::site::build_site;
 use std::path::{Component, Path};
+use walkdir::WalkDir;
 
 pub fn run_build(project_dir: &Path) -> Result<()> {
     let cfg_path = project_dir.join("compositor.toml");
@@ -27,6 +28,7 @@ pub fn run_build(project_dir: &Path) -> Result<()> {
         }
         std::fs::write(&dest, html)?;
     }
+    copy_assets(&docs, &out)?;
 
     run_pagefind(&out);
     println!("built {} pages -> {}", site.pages.len(), out.display());
@@ -61,6 +63,31 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
             }
             _ => {}
         }
+    }
+    Ok(())
+}
+
+/// Mirror every non-Markdown file in `docs` into `out`, preserving relative
+/// paths. Markdown is rendered to HTML elsewhere; everything else (images,
+/// downloads, data files a page links to) is copied verbatim so those
+/// references resolve in the built site — matching MkDocs, which copies all
+/// non-doc files from the docs dir into the output.
+fn copy_assets(docs: &Path, out: &Path) -> Result<()> {
+    for entry in WalkDir::new(docs) {
+        let entry = entry?;
+        let path = entry.path();
+        if !entry.file_type().is_file() {
+            continue;
+        }
+        if path.extension().and_then(|e| e.to_str()) == Some("md") {
+            continue;
+        }
+        let rel = path.strip_prefix(docs)?;
+        let dest = out.join(rel);
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(path, &dest).with_context(|| format!("copying asset {}", path.display()))?;
     }
     Ok(())
 }

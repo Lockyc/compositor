@@ -34,7 +34,7 @@ pub fn tree_from_pages(pages: &[Page]) -> NavTree {
         for d in dirs {
             cur = cur.subdirs.entry(d.clone()).or_default();
         }
-        let stem = file[0].trim_end_matches(".md");
+        let stem = file[0].strip_suffix(".md").unwrap_or(&file[0]);
         // index sorts before everything: prefix key with '0', else '1'.
         let sort_key = if stem == "index" {
             "0".to_string()
