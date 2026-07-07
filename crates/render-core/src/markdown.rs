@@ -125,8 +125,10 @@ fn find_first_h1<'a>(node: &'a AstNode<'a>) -> Option<String> {
 fn text_of<'a>(node: &'a AstNode<'a>) -> String {
     let mut s = String::new();
     for d in node.descendants() {
-        if let NodeValue::Text(t) = &d.data.borrow().value {
-            s.push_str(t);
+        match &d.data.borrow().value {
+            NodeValue::Text(t) => s.push_str(t),
+            NodeValue::Code(code) => s.push_str(&code.literal),
+            _ => {}
         }
     }
     s
@@ -159,5 +161,19 @@ mod tests {
     fn no_h1_is_none() {
         let r = render_markdown("## Sub only\n\nbody", Path::new(""), &HashSet::new()).unwrap();
         assert!(r.first_h1.is_none());
+    }
+
+    #[test]
+    fn extracts_first_h1_with_inline_code() {
+        let r = render_markdown(
+            "# Prettier `just` recipe list (`x.sh`)",
+            Path::new(""),
+            &HashSet::new(),
+        )
+        .unwrap();
+        assert_eq!(
+            r.first_h1,
+            Some("Prettier just recipe list (x.sh)".to_string())
+        );
     }
 }
