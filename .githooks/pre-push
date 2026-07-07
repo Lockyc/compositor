@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# docgate pre-push gate. Activated per clone via core.hooksPath -> .githooks.
+# Fails closed: if docgate can't be found the push is blocked.
+#
+# HOST CHOICE (the line marked below): public repo -> github.com/lockyc/docgate;
+# private repo -> an internal host. The public host is the only one an
+# outside clone / CI can reach, so a public repo MUST use it.
+set -euo pipefail
+
+# Resolve docgate even under a minimal hook PATH. Git runs hooks with whatever
+# PATH the caller had; GUI clients and some agent harnesses push with a bare PATH
+# that omits ~/go/bin, so 'command -v docgate' alone is unreliable and would
+# make the gate fail-closed purely because it couldn't see an installed binary.
+# Fall back to the Go install dirs before giving up.
+docgate_bin() {
+  if command -v docgate >/dev/null 2>&1; then command -v docgate; return; fi
+  local d
+  for d in "${GOBIN:-}" "${GOPATH:+${GOPATH%%:*}/bin}" "$HOME/go/bin"; do
+    [ -n "$d" ] && [ -x "$d/docgate" ] && { printf '%s\n' "$d/docgate"; return; }
+  done
+  if command -v go >/dev/null 2>&1; then
+    d="$(go env GOBIN 2>/dev/null)"; [ -z "$d" ] && d="$(go env GOPATH 2>/dev/null)/bin"
+    [ -x "$d/docgate" ] && { printf '%s\n' "$d/docgate"; return; }
+  fi
+  return 1
+}
+
+if ! bin="$(docgate_bin)"; then
+  echo "docgate: not found on PATH or in the Go bin dir — push blocked (fail-closed)." >&2
+  echo "  install it: go install github.com/lockyc/docgate@latest" >&2   # HOST CHOICE
+  exit 1
+fi
+exec "$bin" --checks orphans,broken,untracked .
