@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::frontmatter::split_frontmatter;
-use crate::markdown::render_markdown;
+use crate::markdown::{render_markdown, LinkPolicy};
 use crate::nav::{tree_from_pages, NavTree};
 
 pub struct Page {
@@ -40,7 +40,7 @@ fn url_for(rel: &Path) -> String {
     s
 }
 
-pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
+pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
     // Pass 1: collect page metadata + known urls.
     let mut raws = Vec::new(); // (rel, page_dir, stem, fm_title, body)
     let mut known_urls = std::collections::HashSet::new();
@@ -65,7 +65,7 @@ pub fn build_site(docs_dir: &Path) -> Result<SiteModel> {
     // Pass 2: render (links now resolvable).
     let mut pages = Vec::new();
     for (rel, page_dir, stem, fm_title, body) in raws {
-        let rendered = render_markdown(&body, &page_dir, &known_urls)?;
+        let rendered = render_markdown(&body, &page_dir, &known_urls, policy)?;
         let title = fm_title
             .or(rendered.first_h1)
             .unwrap_or_else(|| humanize_filename(&stem));

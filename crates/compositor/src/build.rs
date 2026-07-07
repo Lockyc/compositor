@@ -2,6 +2,7 @@ use crate::config::SiteConfig;
 use crate::render_page::render_page;
 use anyhow::{anyhow, Context, Result};
 use render_core::site::build_site;
+use render_core::LinkPolicy;
 use std::path::{Component, Path};
 use walkdir::WalkDir;
 
@@ -19,7 +20,7 @@ pub fn run_build(project_dir: &Path) -> Result<()> {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
-    let site = build_site(&docs)?;
+    let site = build_site(&docs, LinkPolicy::Strict)?;
     for page in &site.pages {
         let html = render_page(&cfg, &site.nav, page);
         let dest = out.join(&page.url);
