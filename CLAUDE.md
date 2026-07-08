@@ -6,6 +6,24 @@ A Rust static-site generator for Markdown doc repos, replacing MkDocs across the
 the docs sites. `compositor build <dir>` renders a directory of Markdown into a themed,
 tree-navigated, Pagefind-indexed static HTML site.
 
+**compositor owns the entire shell; Markdown is purely content.** The page chrome,
+navigation menu, link rewriting, titles, the home/landing page, and configuration
+are all compositor's responsibility — handled with **sane defaults and graceful
+degradation**, never pushed onto the author or required as config. A docs tree needs
+no `compositor.toml` and no special files to work:
+
+- **No config** → defaults are synthesized (`site_name` from the folder; docs from
+  `docs/` if present, else the dir itself). A *malformed* `compositor.toml` is still a
+  hard, named error — only a *missing* one falls back. (See `config::SiteConfig::load`.)
+- **No home page** → `/` still renders the shell with the full navigation menu and a
+  blank body. A root `index`/`home`/`readme` file (any case) is promoted to the home
+  when present; otherwise the home is generated. (See `render_page::resolve_home`.)
+- **A broken internal link** → degrades to a 404 under `serve`, never a halt (below).
+
+The Markdown author writes content; compositor supplies everything around it. When a
+non-content concern has no obvious answer, pick the graceful default — don't error and
+don't require the author to configure it.
+
 **Designed to run unattended.** The sites compositor serves rebuild without a human
 watching a terminal, so the tool must **degrade gracefully on content errors, never
 halt or swallow updates**. This splits the two commands' failure policy:

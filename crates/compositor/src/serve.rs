@@ -50,8 +50,11 @@ pub(crate) fn build_pages(
     site: &SiteModel,
     epoch: u64,
 ) -> HashMap<String, String> {
+    // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
+    let home = crate::render_page::resolve_home(site);
     site.pages
         .iter()
+        .chain(home.as_ref())
         .map(|p| {
             (
                 p.url.clone(),

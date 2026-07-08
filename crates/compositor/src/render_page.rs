@@ -1,7 +1,8 @@
 use crate::config::SiteConfig;
 use askama::Template;
 use render_core::nav::{NavNode, NavTree};
-use render_core::site::Page;
+use render_core::site::{Page, SiteModel};
+use std::path::PathBuf;
 
 pub const STYLE_CSS: &str = include_str!("../assets/style.css");
 
@@ -10,6 +11,7 @@ pub const STYLE_CSS: &str = include_str!("../assets/style.css");
 struct PageTemplate<'a> {
     page_title: &'a str,
     site_name: &'a str,
+    home_href: String,
     style: &'a str,
     nav_html: String,
     body: &'a str,
@@ -26,12 +28,62 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
     PageTemplate {
         page_title: &page.title,
         site_name: &cfg.site_name,
+        // The site name links back to the home page (`/`), relative to this
+        // page's depth — the only always-present way back to `/`.
+        home_href: format!("{prefix}index.html"),
         style: STYLE_CSS,
         nav_html: nav_to_html(nav, &prefix),
         body: &page.html,
     }
     .render()
     .expect("template render is infallible")
+}
+
+/// Ensure the site has a home page served at `/` (`index.html`). compositor owns
+/// the shell, so a docs tree with no landing page still gets a working `/`:
+/// - a root `index.md` already produces `index.html` — nothing to add;
+/// - otherwise a root `index`/`home`/`readme` file (any case) is promoted to the
+///   home, aliased at `index.html` while keeping its own url so links still work;
+/// - otherwise a blank home — the shell renders the navigation menu with an empty
+///   body until a real landing page exists.
+///
+/// Returned (when `Some`) as an extra page for callers to render alongside the
+/// real pages; it is intentionally not part of the nav tree.
+pub fn resolve_home(site: &SiteModel) -> Option<Page> {
+    if site.pages.iter().any(|p| p.url == "index.html") {
+        return None;
+    }
+    for stem in ["index", "home", "readme"] {
+        if let Some(src) = site.pages.iter().find(|p| is_root_named(p, stem)) {
+            return Some(Page {
+                url: "index.html".to_string(),
+                rel_path: PathBuf::from("index.md"),
+                title: src.title.clone(),
+                html: src.html.clone(),
+            });
+        }
+    }
+    Some(Page {
+        url: "index.html".to_string(),
+        rel_path: PathBuf::from("index.md"),
+        title: "Home".to_string(),
+        html: String::new(),
+    })
+}
+
+/// A root-level (no subdirectory) page whose filename stem equals `stem`,
+/// case-insensitively — so `README.md`, `Home.md`, etc. all match.
+fn is_root_named(page: &Page, stem: &str) -> bool {
+    let at_root = page
+        .rel_path
+        .parent()
+        .is_none_or(|p| p.as_os_str().is_empty());
+    let name_matches = page
+        .rel_path
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .is_some_and(|s| s.eq_ignore_ascii_case(stem));
+    at_root && name_matches
 }
 
 fn nav_to_html(nav: &NavTree, prefix: &str) -> String {
@@ -70,4 +122,64 @@ fn html_escape(s: &str) -> String {
         .replace('<', "&lt;")
         .replace('>', "&gt;")
         .replace('"', "&quot;")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn page(rel: &str, url: &str, html: &str) -> Page {
+        Page {
+            rel_path: PathBuf::from(rel),
+            url: url.to_string(),
+            title: "T".to_string(),
+            html: html.to_string(),
+        }
+    }
+
+    fn site(pages: Vec<Page>) -> SiteModel {
+        SiteModel {
+            pages,
+            nav: NavTree(vec![]),
+        }
+    }
+
+    #[test]
+    fn no_home_added_when_index_exists() {
+        let s = site(vec![page("index.md", "index.html", "x")]);
+        assert!(resolve_home(&s).is_none());
+    }
+
+    #[test]
+    fn readme_is_promoted_to_home_any_case() {
+        let s = site(vec![page("README.md", "README.html", "readme body")]);
+        let home = resolve_home(&s).unwrap();
+        assert_eq!(home.url, "index.html");
+        assert_eq!(home.html, "readme body");
+    }
+
+    #[test]
+    fn home_md_beats_readme() {
+        let s = site(vec![
+            page("readme.md", "readme.html", "R"),
+            page("home.md", "home.html", "H"),
+        ]);
+        assert_eq!(resolve_home(&s).unwrap().html, "H");
+    }
+
+    #[test]
+    fn blank_home_when_no_landing_candidate() {
+        let s = site(vec![page("guide.md", "guide.html", "g")]);
+        let home = resolve_home(&s).unwrap();
+        assert_eq!(home.url, "index.html");
+        assert!(home.html.is_empty());
+        assert_eq!(home.title, "Home");
+    }
+
+    #[test]
+    fn nested_readme_is_not_promoted() {
+        // A README inside a subdirectory must not become the site home.
+        let s = site(vec![page("sub/readme.md", "sub/readme.html", "R")]);
+        assert!(resolve_home(&s).unwrap().html.is_empty());
+    }
 }

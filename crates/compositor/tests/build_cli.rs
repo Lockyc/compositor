@@ -87,6 +87,49 @@ fn build_works_without_compositor_toml_using_docs_subdir() {
 }
 
 #[test]
+fn build_synthesizes_a_home_when_no_index_md() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-home-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"S\"\n").unwrap();
+    // No index.md / home.md / readme.md — only a content page.
+    fs::write(tmp.join("docs/guide.md"), "# Guide\n\nbody").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    // A home page is generated at index.html; the shell carries the nav menu,
+    // so the guide is reachable from `/` even with no landing file.
+    let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
+    assert!(
+        index.contains(">Guide</a>"),
+        "home should list the menu: {index}"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn build_promotes_readme_to_the_home() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-readme-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"S\"\n").unwrap();
+    // A root README (uppercase) and no index.md.
+    fs::write(tmp.join("docs/README.md"), "# Welcome\n\nstart here").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    // `/` serves the README content...
+    let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
+    assert!(
+        index.contains("start here"),
+        "home should carry README body"
+    );
+    // ...and the README still resolves at its own url so links keep working.
+    assert!(tmp.join("site/README.html").exists());
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
 fn build_works_on_bare_markdown_dir_without_docs_subdir() {
     let tmp = std::env::temp_dir().join(format!("compositor-build-bare-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);

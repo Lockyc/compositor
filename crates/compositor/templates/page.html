@@ -7,7 +7,7 @@
   <style>{{ style }}</style>
 </head>
 <body>
-  <nav class="sidebar" data-pagefind-ignore><div class="site-name">{{ site_name }}</div>{{ nav_html|safe }}</nav>
+  <nav class="sidebar" data-pagefind-ignore><div class="site-name"><a href="{{ home_href }}">{{ site_name }}</a></div>{{ nav_html|safe }}</nav>
   <main class="content" data-pagefind-body>{{ body|safe }}</main>
 </body>
 </html>
