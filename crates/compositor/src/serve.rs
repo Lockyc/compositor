@@ -238,9 +238,8 @@ fn open_browser(url: &str) {
 }
 
 pub fn run_serve(project_dir: &Path, host: &str, port: u16, open: bool) -> Result<()> {
-    let cfg_path = project_dir.join("compositor.toml");
-    let cfg: SiteConfig = toml::from_str(&std::fs::read_to_string(&cfg_path)?)?;
-    let docs = project_dir.join(cfg.docs_dir());
+    let cfg = SiteConfig::load(project_dir)?;
+    let docs = cfg.docs_path(project_dir);
 
     let site = build_site(&docs, LinkPolicy::Lenient)?;
     let state = Arc::new(RwLock::new(ServedSite {

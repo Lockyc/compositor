@@ -68,3 +68,42 @@ fn build_rejects_out_dir_that_would_delete_the_project() {
     );
     fs::remove_dir_all(&tmp).ok();
 }
+
+#[test]
+fn build_works_without_compositor_toml_using_docs_subdir() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-notoml-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    // No compositor.toml at all — defaults are synthesized (site_name from the
+    // folder, docs_dir = "docs" since that subdir exists).
+    fs::write(tmp.join("docs/index.md"), "# Home\n\nbody").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
+    // Page rendered; title is "<h1> · <derived site_name>".
+    assert!(index.contains("<title>Home"), "index: {index}");
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn build_works_on_bare_markdown_dir_without_docs_subdir() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-bare-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    // Markdown directly in the dir — no docs/ subdir, no compositor.toml.
+    fs::write(tmp.join("index.md"), "# Home").unwrap();
+    fs::write(tmp.join("logo.png"), b"PNG").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    // Output lands in <dir>/site; the asset is mirrored.
+    assert!(tmp.join("site/index.html").exists());
+    assert!(tmp.join("site/logo.png").exists());
+    // The copy_assets guard must stop the output being copied into itself.
+    assert!(
+        !tmp.join("site/site").exists(),
+        "site/ must not be recursively copied into itself"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}

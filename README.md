@@ -29,10 +29,14 @@ cargo build --release
 ./target/release/compositor build --dir path/to/docs-repo
 ```
 
-The project directory needs a `compositor.toml` setting `site_name` (optionally
+A `compositor.toml` is optional. With one, it sets `site_name` (optionally
 `site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`]).
-The rendered site lands in `out_dir`; if the `pagefind` binary is on PATH it is
-invoked automatically to build the search index.
+Without one, defaults are synthesized: `site_name` from the folder name, and the
+docs are taken from `docs/` if that subdir exists, else the directory itself — so
+a bare folder of Markdown builds and serves with no config. (A `compositor.toml`
+that exists but is malformed is a hard error, not a silent fallback.) The rendered
+site lands in `out_dir`; if the `pagefind` binary is on PATH it is invoked
+automatically to build the search index.
 
 For local editing, `serve` watches the docs tree and live-reloads the browser on
 every change:

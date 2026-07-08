@@ -7,14 +7,8 @@ use std::path::{Component, Path};
 use walkdir::WalkDir;
 
 pub fn run_build(project_dir: &Path) -> Result<()> {
-    let cfg_path = project_dir.join("compositor.toml");
-    let cfg: SiteConfig = toml::from_str(
-        &std::fs::read_to_string(&cfg_path)
-            .with_context(|| format!("reading {}", cfg_path.display()))?,
-    )
-    .with_context(|| format!("parsing {}", cfg_path.display()))?;
-
-    let docs = project_dir.join(cfg.docs_dir());
+    let cfg = SiteConfig::load(project_dir)?;
+    let docs = cfg.docs_path(project_dir);
     validate_out_dir(cfg.out_dir())?;
     let out = project_dir.join(cfg.out_dir());
     let _ = std::fs::remove_dir_all(&out);
@@ -74,7 +68,13 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
 /// references resolve in the built site — matching MkDocs, which copies all
 /// non-doc files from the docs dir into the output.
 fn copy_assets(docs: &Path, out: &Path) -> Result<()> {
-    for entry in WalkDir::new(docs) {
+    // Skip the output tree: when the docs dir *is* the project dir (a bare
+    // Markdown folder with no config), `out` sits inside `docs`, so without
+    // this the walk would copy the freshly-written site back into itself.
+    for entry in WalkDir::new(docs)
+        .into_iter()
+        .filter_entry(|e| !e.path().starts_with(out))
+    {
         let entry = entry?;
         let path = entry.path();
         if !entry.file_type().is_file() {
