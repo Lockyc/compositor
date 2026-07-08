@@ -17,10 +17,13 @@ Markdown → themed, tree-navigated, Pagefind-indexed static HTML, with non-Mark
 assets copied through, verified end to end against a real 42-page docs site.
 Milestone 4 (`compositor serve`) is also complete: a live-reload dev server that
 watches the docs tree, rebuilds in memory on every change, and refreshes every
-open browser tab automatically. Not yet built: `!!!` admonitions, `[[wikilinks]]`,
-and the theme-polish pass — which adds a per-page TOC and the Pagefind **search
-box** (the index is built now; the UI is not). See [`CLAUDE.md`](CLAUDE.md) for
-the full render surface and roadmap.
+open browser tab automatically. The theme-polish pass has also landed: a
+Pico.css-based shell with a top bar (brand, Pagefind search box, light/dark
+toggle), a left tree-nav with active-page highlighting, and a server-side
+per-page TOC with scroll-spy. Search is live in `build` output; it's unavailable
+under `serve` (which renders in memory and never runs Pagefind). Not yet built:
+`!!!` admonitions and `[[wikilinks]]`. See [`CLAUDE.md`](CLAUDE.md) for the full
+render surface and roadmap.
 
 ## Build & use
 

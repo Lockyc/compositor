@@ -51,13 +51,17 @@ every viewer's browser by polling a `/__reload` epoch endpoint. `serve`'s accept
 limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
 — read it before extending `serve`.
 
+The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
+(brand, Pagefind search box, light/dark toggle that persists across reload), a left
+tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
+(h2/h3) with scroll-spy. The search box is populated by the Pagefind index built
+during `build`; it is unavailable under `serve` (which renders in memory and never
+runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
+
 Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
 `[[wikilinks]]` + frontmatter-driven KB titles (M3); host rollout, retiring
-`mkdocs-base` (M5). The Pagefind **search UI** (an input box
-wired to `pagefind-ui`) is deferred to the theme-polish pass: the search index is
-built now, but the rendered pages carry no search box yet. Known divergence from
-MkDocs: filenames with spaces produce spaces in URLs (functional; slugification is a
-deferred decision).
+`mkdocs-base` (M5). Known divergence from MkDocs: filenames with spaces produce
+spaces in URLs (functional; slugification is a deferred decision).
 
 ## Layout
 
@@ -70,7 +74,9 @@ crates/
                                  # resolution, nav tree, link rewrite -> SiteModel.
                                  # No CLI/disk assumptions, so `serve` and a future
                                  # Tauri app can reuse it.
-  compositor/                   # CLI crate: config load, theme wrap (askama),
+  compositor/                   # CLI crate: config load, Pico-based theme wrap
+                                 # (askama) served via a linked assets/compositor.css
+                                 # + assets/compositor.js (no inline stylesheet),
                                  # write out_dir, invoke Pagefind.
 ```
 
@@ -87,14 +93,14 @@ crates/
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
   references resolve in the built site — as MkDocs does.
+- Server-side per-page TOC (h2/h3) with scroll-spy, and the Pagefind search UI
+  wired into the top bar (search works in `build` output; unavailable under
+  `serve`, see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
 
 Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
-admonitions, explicit-`nav` config override, **per-page TOC** and the **Pagefind
-search UI** (both deferred to the theme-polish pass — heading anchors and the search
-*index* ship in M1, the rendered TOC and search box do not), the `serve` dev server,
-host rollout. No functionality duplicated from `docgate`: `build` fails only on an
-unresolvable internal link (a render error) — orphan/graph auditing stays
-docgate's.
+admonitions, explicit-`nav` config override, the `serve` dev server, host rollout.
+No functionality duplicated from `docgate`: `build` fails only on an unresolvable
+internal link (a render error) — orphan/graph auditing stays docgate's.
 
 ## Branching & releases
 
