@@ -2,22 +2,40 @@
    assets/pico.min.css). Pico styles the Markdown content (#doc); everything
    here is the shell: green accent tokens, top bar, grid layout, nav, TOC. */
 
-/* --- Green accent tokens (light + dark), overriding Pico's default primary. */
+/* --- Green accent tokens, overriding Pico's default (blue) primary. Text-tier
+   vars (--pico-primary etc.) plus the solid-fill vars Pico hardcodes to blue
+   (--pico-primary-background/-border/-inverse), so buttons/switches read green
+   too. Light is the base; dark applies on explicit toggle OR system preference
+   (unless explicitly toggled to light). */
 :root {
   --pico-primary: #0a8f4d;
   --pico-primary-hover: #0b5;
   --pico-primary-focus: rgba(11, 187, 85, 0.25);
   --pico-primary-underline: rgba(10, 143, 77, 0.5);
+  --pico-primary-background: #0a8f4d;
+  --pico-primary-border: #0a8f4d;
+  --pico-primary-hover-background: #097a42;
+  --pico-primary-hover-border: #097a42;
+  --pico-primary-inverse: #fff;
 }
-:root[data-theme="dark"],
-:root:not([data-theme="light"]) {
+:root[data-theme="dark"] {
   --pico-primary: #3dd68c;
   --pico-primary-hover: #6f6;
+  --pico-primary-background: #2fae6f;
+  --pico-primary-border: #2fae6f;
+  --pico-primary-hover-background: #3dd68c;
+  --pico-primary-hover-border: #3dd68c;
+  --pico-primary-inverse: #08130d;
 }
 @media (prefers-color-scheme: dark) {
   :root:not([data-theme="light"]) {
     --pico-primary: #3dd68c;
     --pico-primary-hover: #6f6;
+    --pico-primary-background: #2fae6f;
+    --pico-primary-border: #2fae6f;
+    --pico-primary-hover-background: #3dd68c;
+    --pico-primary-hover-border: #3dd68c;
+    --pico-primary-inverse: #08130d;
   }
 }
 
