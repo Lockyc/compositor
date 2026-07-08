@@ -11,8 +11,17 @@
   </script>
 </head>
 <body>
-  <nav class="sidebar" id="nav" data-pagefind-ignore><div class="site-name"><a href="{{ home_href }}">{{ site_name }}</a></div>{{ nav_html|safe }}</nav>
-  <main class="content" id="doc" data-pagefind-body>{{ body|safe }}</main>
+  <header class="topbar">
+    <a class="brand" href="{{ home_href }}">{{ site_name }}</a>
+    <div class="search" id="search"></div>
+    <button class="theme-toggle" type="button" aria-label="Toggle light/dark theme">◐</button>
+    <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
+  </header>
+  <main class="layout{% if has_toc %} has-toc{% endif %}">
+    <aside class="menu" id="nav" data-pagefind-ignore>{{ nav_html|safe }}</aside>
+    <article id="doc" role="document" data-pagefind-body>{{ body|safe }}</article>
+    {% if has_toc %}<aside id="toc" data-pagefind-ignore><p class="toc-title">On this page</p>{{ toc_html|safe }}</aside>{% endif %}
+  </main>
   <script src="{{ asset_prefix }}assets/compositor.js" defer></script>
 </body>
 </html>
