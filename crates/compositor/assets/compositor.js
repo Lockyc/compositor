@@ -36,7 +36,7 @@
   if (toc && "IntersectionObserver" in window) {
     var links = {};
     toc.querySelectorAll("a[href^='#']").forEach(function (a) {
-      links[decodeURIComponent(a.getAttribute("href").slice(1))] = a;
+      links[a.getAttribute("href").slice(1)] = a;
     });
     var headings = document.querySelectorAll("#doc h2[id], #doc h3[id]");
     var observer = new IntersectionObserver(

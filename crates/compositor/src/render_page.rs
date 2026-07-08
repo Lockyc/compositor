@@ -45,36 +45,53 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
     .expect("template render is infallible")
 }
 
-/// Render the page's h2/h3 TOC as a nested list. h3s nest under the preceding
-/// h2. Empty input yields an empty string (caller omits the aside entirely).
+/// Render the page's h2/h3 TOC as a nested list: each h3 nests inside the
+/// preceding h2's `<li>` (a proper `<ul>` sublist). An h3 with no preceding h2
+/// (a page whose first sub-heading is an h3) renders at top level rather than
+/// producing an `<li>`-less nested `<ul>`. Empty input yields an empty string
+/// (the caller then omits the `<aside id="toc">` entirely).
 fn toc_to_html(toc: &[TocEntry]) -> String {
     if toc.is_empty() {
         return String::new();
     }
     let mut s = String::from("<ul>");
-    let mut in_sub = false;
+    let mut open_li = false; // a top-level <li> is open, awaiting its close
+    let mut in_sub = false; // a nested <ul> is currently open inside that <li>
     for e in toc {
         let link = format!(
-            "<li><a href=\"#{}\">{}</a></li>",
+            "<a href=\"#{}\">{}</a>",
             html_escape(&e.id),
             html_escape(&e.text)
         );
         if e.level >= 3 {
-            if !in_sub {
-                s.push_str("<ul>");
-                in_sub = true;
+            if open_li {
+                if !in_sub {
+                    s.push_str("<ul>");
+                    in_sub = true;
+                }
+                s.push_str(&format!("<li>{link}</li>"));
+            } else {
+                // Orphan h3: no parent h2, so render it at the top level.
+                s.push_str(&format!("<li>{link}</li>"));
             }
-            s.push_str(&link);
         } else {
             if in_sub {
                 s.push_str("</ul>");
                 in_sub = false;
             }
-            s.push_str(&link);
+            if open_li {
+                s.push_str("</li>");
+            }
+            // Leave the <li> open so any following h3s nest inside it.
+            s.push_str(&format!("<li>{link}"));
+            open_li = true;
         }
     }
     if in_sub {
         s.push_str("</ul>");
+    }
+    if open_li {
+        s.push_str("</li>");
     }
     s.push_str("</ul>");
     s
@@ -273,5 +290,60 @@ mod tests {
         let out = render_page(&cfg, &NavTree(vec![]), &p);
         assert!(!out.contains("id=\"toc\""));
         assert!(!out.contains("has-toc"));
+    }
+
+    #[test]
+    fn toc_nests_h3_inside_preceding_h2_li() {
+        let toc = vec![
+            render_core::markdown::TocEntry {
+                level: 2,
+                id: "alpha".into(),
+                text: "Alpha".into(),
+            },
+            render_core::markdown::TocEntry {
+                level: 3,
+                id: "beta".into(),
+                text: "Beta".into(),
+            },
+            render_core::markdown::TocEntry {
+                level: 3,
+                id: "gamma".into(),
+                text: "Gamma".into(),
+            },
+            render_core::markdown::TocEntry {
+                level: 2,
+                id: "delta".into(),
+                text: "Delta".into(),
+            },
+        ];
+        assert_eq!(
+            toc_to_html(&toc),
+            "<ul><li><a href=\"#alpha\">Alpha</a><ul><li><a href=\"#beta\">Beta</a></li><li><a href=\"#gamma\">Gamma</a></li></ul></li><li><a href=\"#delta\">Delta</a></li></ul>"
+        );
+    }
+
+    #[test]
+    fn toc_leading_h3_renders_at_top_level_not_orphan_sublist() {
+        let toc = vec![
+            render_core::markdown::TocEntry {
+                level: 3,
+                id: "sub".into(),
+                text: "Sub".into(),
+            },
+            render_core::markdown::TocEntry {
+                level: 2,
+                id: "top".into(),
+                text: "Top".into(),
+            },
+        ];
+        let html = toc_to_html(&toc);
+        assert!(
+            !html.contains("<ul><ul>"),
+            "orphan h3 produced an <li>-less nested <ul>: {html}"
+        );
+        assert_eq!(
+            html,
+            "<ul><li><a href=\"#sub\">Sub</a></li><li><a href=\"#top\">Top</a></li></ul>"
+        );
     }
 }

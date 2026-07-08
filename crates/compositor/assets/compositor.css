@@ -2,15 +2,18 @@
    assets/pico.min.css). Pico styles the Markdown content (#doc); everything
    here is the shell: green accent tokens, top bar, grid layout, nav, TOC. */
 
-/* --- Green accent tokens, overriding Pico's default (blue) primary. Text-tier
-   vars (--pico-primary etc.) plus the solid-fill vars Pico hardcodes to blue
-   (--pico-primary-background/-border/-inverse), so buttons/switches read green
-   too. Light is the base; dark applies on explicit toggle OR system preference
-   (unless explicitly toggled to light). */
-:root {
+/* --- Green accent tokens, overriding Pico's default (blue) primary. Scoped with
+   the SAME selectors Pico uses for its light/dark colour schemes so they match
+   Pico's specificity and win purely by cascade order (this file is concatenated
+   AFTER pico.min.css). A plain `:root` here (0,1,0) would LOSE to Pico's
+   `:root:not([data-theme=dark])` (0,2,0), leaving the accent blue in light mode —
+   hence the matching selectors. Includes the solid-fill vars Pico hardcodes to
+   blue (--pico-primary-background/-border/-inverse) so buttons/switches read green. */
+:root:not([data-theme=dark]),
+[data-theme=light] {
   --pico-primary: #0a8f4d;
-  --pico-primary-hover: #0b5;
-  --pico-primary-focus: rgba(11, 187, 85, 0.25);
+  --pico-primary-hover: #097a42;
+  --pico-primary-focus: rgba(10, 143, 77, 0.25);
   --pico-primary-underline: rgba(10, 143, 77, 0.5);
   --pico-primary-background: #0a8f4d;
   --pico-primary-border: #0a8f4d;
@@ -18,9 +21,11 @@
   --pico-primary-hover-border: #097a42;
   --pico-primary-inverse: #fff;
 }
-:root[data-theme="dark"] {
+:root[data-theme=dark] {
   --pico-primary: #3dd68c;
-  --pico-primary-hover: #6f6;
+  --pico-primary-hover: #68e6a8;
+  --pico-primary-focus: rgba(61, 214, 140, 0.25);
+  --pico-primary-underline: rgba(61, 214, 140, 0.5);
   --pico-primary-background: #2fae6f;
   --pico-primary-border: #2fae6f;
   --pico-primary-hover-background: #3dd68c;
@@ -28,9 +33,11 @@
   --pico-primary-inverse: #08130d;
 }
 @media (prefers-color-scheme: dark) {
-  :root:not([data-theme="light"]) {
+  :root:not([data-theme=light]) {
     --pico-primary: #3dd68c;
-    --pico-primary-hover: #6f6;
+    --pico-primary-hover: #68e6a8;
+    --pico-primary-focus: rgba(61, 214, 140, 0.25);
+    --pico-primary-underline: rgba(61, 214, 140, 0.5);
     --pico-primary-background: #2fae6f;
     --pico-primary-border: #2fae6f;
     --pico-primary-hover-background: #3dd68c;
@@ -86,7 +93,22 @@
   grid-template-areas: "menu doc toc";
 }
 #nav { grid-area: menu; }
-#doc { grid-area: doc; min-width: 0; }
+#doc {
+  grid-area: doc;
+  min-width: 0;
+  /* Flat document column, not a Pico card. */
+  margin: 0;
+  padding: 0;
+  background: none;
+  border: 0;
+  border-radius: 0;
+  box-shadow: none;
+  overflow-wrap: break-word;
+}
+/* Wide content (code blocks, tables) scrolls inside its own box so the page body
+   never scrolls sideways; images never overflow the column. */
+#doc :is(pre, table) { overflow-x: auto; max-width: 100%; }
+#doc img { max-width: 100%; height: auto; }
 #toc { grid-area: toc; }
 
 /* --- Left nav. */

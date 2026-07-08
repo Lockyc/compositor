@@ -147,7 +147,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
         respond(
             req,
             200,
-            "text/css; charset=utf-8",
+            content_type(&url),
             crate::assets::stylesheet().into_bytes(),
         );
         return;
@@ -156,7 +156,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
         respond(
             req,
             200,
-            "application/javascript; charset=utf-8",
+            content_type(&url),
             crate::assets::COMPOSITOR_JS.as_bytes().to_vec(),
         );
         return;

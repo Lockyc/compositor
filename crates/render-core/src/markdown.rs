@@ -33,7 +33,10 @@ pub fn comrak_options<'c>() -> Options<'c> {
     o.extension.tasklist = true;
     o.extension.strikethrough = true;
     o.extension.autolink = true;
-    o.extension.header_ids = Some(String::new()); // heading anchors
+    // heading anchors. The empty prefix is load-bearing: `collect_toc` assumes
+    // comrak's emitted heading ids are the bare Anchorizer slug with no
+    // prefix — changing this string here would desync TOC hrefs from anchors.
+    o.extension.header_ids = Some(String::new());
     o
 }
 
