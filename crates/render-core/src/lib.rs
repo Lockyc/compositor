@@ -3,4 +3,4 @@ pub mod markdown;
 pub mod nav;
 pub mod site;
 
-pub use markdown::LinkPolicy;
+pub use markdown::{LinkPolicy, TocEntry};

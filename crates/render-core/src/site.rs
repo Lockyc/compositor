@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::frontmatter::split_frontmatter;
-use crate::markdown::{render_markdown, LinkPolicy};
+use crate::markdown::{render_markdown, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
 
 pub struct Page {
@@ -11,6 +11,7 @@ pub struct Page {
     pub url: String,
     pub title: String,
     pub html: String,
+    pub toc: Vec<TocEntry>,
 }
 
 pub struct SiteModel {
@@ -67,13 +68,15 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
     for (rel, page_dir, stem, fm_title, body) in raws {
         let rendered = render_markdown(&body, &page_dir, &known_urls, policy)?;
         let title = fm_title
-            .or(rendered.first_h1)
+            .clone()
+            .or_else(|| rendered.first_h1.clone())
             .unwrap_or_else(|| humanize_filename(&stem));
         pages.push(Page {
             url: url_for(&rel),
             rel_path: rel,
             title,
             html: rendered.html,
+            toc: rendered.toc,
         });
     }
     let nav = tree_from_pages(&pages);

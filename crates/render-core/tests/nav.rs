@@ -8,6 +8,7 @@ fn page(rel: &str, title: &str) -> Page {
         url: rel.replace(".md", ".html"),
         title: title.into(),
         html: String::new(),
+        toc: Vec::new(),
     }
 }
 

@@ -1,13 +1,21 @@
 use anyhow::{anyhow, Result};
 use comrak::nodes::{AstNode, NodeValue};
 use comrak::plugins::syntect::SyntectAdapter;
-use comrak::{format_html_with_plugins, parse_document, Arena, Options, Plugins};
+use comrak::{format_html_with_plugins, parse_document, Anchorizer, Arena, Options, Plugins};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
 pub struct Rendered {
     pub html: String,
     pub first_h1: Option<String>,
+    pub toc: Vec<TocEntry>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TocEntry {
+    pub level: u8,
+    pub id: String,
+    pub text: String,
 }
 
 /// Whether an unresolvable internal link is a hard error (`build`) or is
@@ -40,6 +48,7 @@ pub fn render_markdown(
     let root = parse_document(&arena, body, &options);
 
     let first_h1 = find_first_h1(root);
+    let toc = collect_toc(root);
 
     for node in root.descendants() {
         let new_url = {
@@ -68,6 +77,7 @@ pub fn render_markdown(
     Ok(Rendered {
         html: String::from_utf8(out).expect("comrak emits valid utf-8"),
         first_h1,
+        toc,
     })
 }
 
@@ -155,6 +165,28 @@ fn find_first_h1<'a>(node: &'a AstNode<'a>) -> Option<String> {
     None
 }
 
+/// Collect the page's `h2`/`h3` headings for the table of contents. Every
+/// heading (all levels) is fed through a single `Anchorizer` in document order
+/// so the generated ids match comrak's own `header_ids` output exactly —
+/// comrak dedupes repeated slugs with numeric suffixes across all headings, so
+/// skipping any (even h1/h4) would desync the numbering.
+fn collect_toc<'a>(root: &'a AstNode<'a>) -> Vec<TocEntry> {
+    let mut anchorizer = Anchorizer::new();
+    let mut toc = Vec::new();
+    for node in root.descendants() {
+        let level = match &node.data.borrow().value {
+            NodeValue::Heading(h) => h.level,
+            _ => continue,
+        };
+        let text = text_of(node);
+        let id = anchorizer.anchorize(text.clone());
+        if level == 2 || level == 3 {
+            toc.push(TocEntry { level, id, text });
+        }
+    }
+    toc
+}
+
 fn text_of<'a>(node: &'a AstNode<'a>) -> String {
     let mut s = String::new();
     for d in node.descendants() {
@@ -233,5 +265,68 @@ mod tests {
             r.first_h1,
             Some("Prettier just recipe list (x.sh)".to_string())
         );
+    }
+
+    #[test]
+    fn toc_collects_h2_and_h3_only() {
+        let r = render_markdown(
+            "# Title\n\n## Alpha\n\ntext\n\n### Beta\n\n#### Deep\n\ntext",
+            Path::new(""),
+            &HashSet::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        let levels: Vec<u8> = r.toc.iter().map(|t| t.level).collect();
+        let texts: Vec<&str> = r.toc.iter().map(|t| t.text.as_str()).collect();
+        assert_eq!(levels, vec![2, 3]); // h1 and h4 excluded
+        assert_eq!(texts, vec!["Alpha", "Beta"]);
+    }
+
+    #[test]
+    fn toc_ids_match_emitted_heading_anchors() {
+        let r = render_markdown(
+            "## Getting Started\n\ntext",
+            Path::new(""),
+            &HashSet::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        let id = &r.toc[0].id;
+        assert_eq!(id, "getting-started");
+        // The id must resolve to an anchor comrak actually emitted in the HTML.
+        assert!(
+            r.html.contains(&format!("id=\"{id}\"")),
+            "emitted html missing id={id}: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn toc_dedup_numbering_tracks_comrak() {
+        // Two identical headings: comrak suffixes the second id (`-1`). The TOC
+        // must use the same suffixing, which requires anchorizing every heading in
+        // document order through one shared Anchorizer.
+        let r = render_markdown(
+            "## Dup\n\n## Dup\n\ntext",
+            Path::new(""),
+            &HashSet::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        let ids: Vec<&str> = r.toc.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["dup", "dup-1"]);
+        assert!(r.html.contains("id=\"dup\"") && r.html.contains("id=\"dup-1\""));
+    }
+
+    #[test]
+    fn toc_empty_when_no_subheadings() {
+        let r = render_markdown(
+            "# Only H1\n\nbody with no sub-headings",
+            Path::new(""),
+            &HashSet::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(r.toc.is_empty());
     }
 }
