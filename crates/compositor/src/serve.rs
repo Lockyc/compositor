@@ -100,11 +100,19 @@ fn content_type(path: &str) -> &'static str {
 }
 
 fn respond(req: Request, status: u16, ctype: &str, body: Vec<u8>) {
-    let header = Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes())
+    let ctype_header = Header::from_bytes(&b"Content-Type"[..], ctype.as_bytes())
         .expect("static content-type header is valid");
+    // A live-reload server must never serve stale content: the `/__reload`
+    // liveness poll especially must never be cached by a browser (fetch's
+    // heuristic cache) or an interposed proxy, or the client polls a frozen
+    // epoch and reload silently stops — and an edited asset would reload stale.
+    // `no-store` on every response keeps "save and see it" honest.
+    let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"no-store"[..])
+        .expect("static cache-control header is valid");
     let resp = Response::from_data(body)
         .with_status_code(status)
-        .with_header(header);
+        .with_header(ctype_header)
+        .with_header(cache_header);
     let _ = req.respond(resp);
 }
 
@@ -336,10 +344,21 @@ mod tests {
         assert!(page.contains("200 OK"), "page resp: {page}");
         assert!(page.contains("Hello"));
         assert!(page.contains("/__reload"));
+        // Live content must be uncacheable, or a browser/proxy cache defeats
+        // live-reload (see `respond`).
+        assert!(
+            page.to_lowercase().contains("cache-control: no-store"),
+            "page resp: {page}"
+        );
 
         let reload = get(addr, "/__reload");
         assert!(reload.contains("200 OK"));
         assert!(reload.trim_end().ends_with('0')); // epoch 0
+                                                   // The liveness poll especially must never be cached.
+        assert!(
+            reload.to_lowercase().contains("cache-control: no-store"),
+            "reload resp: {reload}"
+        );
     }
 
     #[test]
