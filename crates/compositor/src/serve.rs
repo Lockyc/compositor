@@ -142,6 +142,26 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
         return;
     }
 
+    // Embedded shell assets (not in the page map, not on disk under serve).
+    if url == crate::assets::CSS_URL {
+        respond(
+            req,
+            200,
+            "text/css; charset=utf-8",
+            crate::assets::stylesheet().into_bytes(),
+        );
+        return;
+    }
+    if url == crate::assets::JS_URL {
+        respond(
+            req,
+            200,
+            "application/javascript; charset=utf-8",
+            crate::assets::COMPOSITOR_JS.as_bytes().to_vec(),
+        );
+        return;
+    }
+
     // On-demand asset straight from docs_dir (never .md, never traversing out).
     if is_safe(&url) && !url.ends_with(".md") {
         let asset = docs.join(&url);
@@ -361,6 +381,17 @@ mod tests {
             reload.to_lowercase().contains("cache-control: no-store"),
             "reload resp: {reload}"
         );
+    }
+
+    #[test]
+    fn serves_embedded_shell_css() {
+        let state = sample_state();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs = std::path::PathBuf::from(".");
+        std::thread::spawn(move || serve_loop(server, state, docs));
+        let css = get(addr, "/assets/compositor.css");
+        assert!(css.contains(".topbar"));
     }
 
     #[test]

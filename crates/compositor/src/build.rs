@@ -27,6 +27,7 @@ pub fn run_build(project_dir: &Path) -> Result<()> {
         std::fs::write(&dest, html)?;
     }
     copy_assets(&docs, &out)?;
+    write_shell_assets(&out)?;
 
     run_pagefind(&out);
     println!("built {} pages -> {}", site.pages.len(), out.display());
@@ -93,6 +94,23 @@ fn copy_assets(docs: &Path, out: &Path) -> Result<()> {
         }
         std::fs::copy(path, &dest).with_context(|| format!("copying asset {}", path.display()))?;
     }
+    Ok(())
+}
+
+/// Emit the embedded shell assets (Pico + overrides stylesheet, and the JS) into
+/// `out/assets/`. Written after `copy_assets` so a docs file of the same name
+/// can't clobber them.
+fn write_shell_assets(out: &Path) -> Result<()> {
+    let dir = out.join("assets");
+    std::fs::create_dir_all(&dir)?;
+    std::fs::write(
+        out.join(crate::assets::CSS_URL),
+        crate::assets::stylesheet(),
+    )?;
+    std::fs::write(
+        out.join(crate::assets::JS_URL),
+        crate::assets::COMPOSITOR_JS,
+    )?;
     Ok(())
 }
 

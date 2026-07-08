@@ -130,6 +130,35 @@ fn build_promotes_readme_to_the_home() {
 }
 
 #[test]
+fn build_emits_linked_stylesheet_and_script() {
+    let tmp =
+        std::env::temp_dir().join(format!("compositor-build-assetlink-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(&tmp).unwrap();
+    fs::write(tmp.join("index.md"), "# Home\n\nhi").unwrap();
+
+    run_build(&tmp).unwrap();
+
+    // Default out_dir (see SiteConfig::out_dir) is "site".
+    let out = tmp.join("site");
+    let css = fs::read_to_string(out.join("assets/compositor.css")).unwrap();
+    assert!(
+        css.contains("Pico CSS"),
+        "vendored Pico not concatenated in"
+    );
+    assert!(css.contains(".topbar"), "overrides not concatenated in");
+    assert!(out.join("assets/compositor.js").is_file());
+
+    let page = fs::read_to_string(out.join("index.html")).unwrap();
+    assert!(page.contains("assets/compositor.css"));
+    assert!(
+        !page.contains("<style>"),
+        "CSS should be linked, not inlined"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
 fn build_works_on_bare_markdown_dir_without_docs_subdir() {
     let tmp = std::env::temp_dir().join(format!("compositor-build-bare-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);

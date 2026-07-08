@@ -19,6 +19,7 @@ fn page_html_has_title_body_and_nav() {
         url: "index.html".into(),
         title: "Home".into(),
         html: "<p>hello</p>".into(),
+        toc: vec![],
     };
     let out = render_page(&cfg, &nav, &page);
     assert!(out.contains("<title>Home · Cheatsheet</title>"));
@@ -42,6 +43,7 @@ fn nav_url_and_title_are_escaped_for_html_attribute_context() {
         url: "index.html".into(),
         title: "Home".into(),
         html: "<p>hello</p>".into(),
+        toc: vec![],
     };
     let out = render_page(&cfg, &nav, &page);
 
@@ -72,6 +74,7 @@ fn nav_links_are_page_relative_for_nested_pages() {
         url: "cli/tar.html".into(),
         title: "Tar".into(),
         html: "<p>hello</p>".into(),
+        toc: vec![],
     };
     let out = render_page(&cfg, &nav, &page);
     assert!(out.contains("href=\"../index.html\""));

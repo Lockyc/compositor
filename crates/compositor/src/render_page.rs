@@ -4,15 +4,13 @@ use render_core::nav::{NavNode, NavTree};
 use render_core::site::{Page, SiteModel};
 use std::path::PathBuf;
 
-pub const STYLE_CSS: &str = include_str!("../assets/style.css");
-
 #[derive(Template)]
 #[template(path = "page.html")]
 struct PageTemplate<'a> {
     page_title: &'a str,
     site_name: &'a str,
     home_href: String,
-    style: &'a str,
+    asset_prefix: String,
     nav_html: String,
     body: &'a str,
 }
@@ -31,7 +29,7 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
         // The site name links back to the home page (`/`), relative to this
         // page's depth — the only always-present way back to `/`.
         home_href: format!("{prefix}index.html"),
-        style: STYLE_CSS,
+        asset_prefix: prefix.clone(),
         nav_html: nav_to_html(nav, &prefix),
         body: &page.html,
     }
@@ -60,6 +58,7 @@ pub fn resolve_home(site: &SiteModel) -> Option<Page> {
                 rel_path: PathBuf::from("index.md"),
                 title: src.title.clone(),
                 html: src.html.clone(),
+                toc: src.toc.clone(),
             });
         }
     }
@@ -68,6 +67,7 @@ pub fn resolve_home(site: &SiteModel) -> Option<Page> {
         rel_path: PathBuf::from("index.md"),
         title: "Home".to_string(),
         html: String::new(),
+        toc: vec![],
     })
 }
 
@@ -134,6 +134,7 @@ mod tests {
             url: url.to_string(),
             title: "T".to_string(),
             html: html.to_string(),
+            toc: vec![],
         }
     }
 
