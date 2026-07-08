@@ -11,14 +11,14 @@
    blue (--pico-primary-background/-border/-inverse) so buttons/switches read green. */
 :root:not([data-theme=dark]),
 [data-theme=light] {
-  --pico-primary: #0a8f4d;
-  --pico-primary-hover: #097a42;
-  --pico-primary-focus: rgba(10, 143, 77, 0.25);
-  --pico-primary-underline: rgba(10, 143, 77, 0.5);
-  --pico-primary-background: #0a8f4d;
-  --pico-primary-border: #0a8f4d;
-  --pico-primary-hover-background: #097a42;
-  --pico-primary-hover-border: #097a42;
+  --pico-primary: #0a7a41;
+  --pico-primary-hover: #086835;
+  --pico-primary-focus: rgba(10, 122, 65, 0.25);
+  --pico-primary-underline: rgba(10, 122, 65, 0.5);
+  --pico-primary-background: #0a7a41;
+  --pico-primary-border: #0a7a41;
+  --pico-primary-hover-background: #086835;
+  --pico-primary-hover-border: #086835;
   --pico-primary-inverse: #fff;
 }
 :root[data-theme=dark] {
@@ -174,4 +174,5 @@
     transition: transform 0.2s ease;
   }
   #nav.is-open-on-mobile { transform: translateX(0); }
+  .nav-open { overflow: hidden; }
 }

@@ -19,7 +19,7 @@
     <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false">☰</button>
   </header>
   <main class="layout{% if has_toc %} has-toc{% endif %}">
-    <aside class="menu" id="nav" data-pagefind-ignore>{{ nav_html|safe }}</aside>
+    <aside id="nav" data-pagefind-ignore>{{ nav_html|safe }}</aside>
     <article id="doc" role="document" data-pagefind-body>{{ body|safe }}</article>
     {% if has_toc %}<aside id="toc" data-pagefind-ignore><p class="toc-title">On this page</p>{{ toc_html|safe }}</aside>{% endif %}
   </main>

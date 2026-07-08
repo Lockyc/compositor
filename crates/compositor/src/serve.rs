@@ -148,7 +148,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
             req,
             200,
             content_type(&url),
-            crate::assets::stylesheet().into_bytes(),
+            crate::assets::stylesheet().as_bytes().to_vec(),
         );
         return;
     }
@@ -392,6 +392,17 @@ mod tests {
         std::thread::spawn(move || serve_loop(server, state, docs));
         let css = get(addr, "/assets/compositor.css");
         assert!(css.contains(".topbar"));
+    }
+
+    #[test]
+    fn serves_embedded_shell_js() {
+        let state = sample_state();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs = std::path::PathBuf::from(".");
+        std::thread::spawn(move || serve_loop(server, state, docs));
+        let js = get(addr, "/assets/compositor.js");
+        assert!(js.contains("addEventListener"));
     }
 
     #[test]

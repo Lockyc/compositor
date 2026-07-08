@@ -14,9 +14,11 @@
     );
   }
   if (toggle) {
+    toggle.setAttribute("aria-pressed", current() === "dark" ? "true" : "false");
     toggle.addEventListener("click", function () {
       var next = current() === "dark" ? "light" : "dark";
       root.setAttribute("data-theme", next);
+      toggle.setAttribute("aria-pressed", next === "dark" ? "true" : "false");
       try { localStorage.setItem("theme", next); } catch (e) {}
     });
   }
@@ -28,6 +30,7 @@
     navToggle.addEventListener("click", function () {
       var open = menu.classList.toggle("is-open-on-mobile");
       navToggle.setAttribute("aria-expanded", open ? "true" : "false");
+      root.classList.toggle("nav-open", open);
     });
   }
 
