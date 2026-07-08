@@ -5,6 +5,7 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>{{ page_title }} · {{ site_name }}</title>
   <link rel="stylesheet" href="{{ asset_prefix }}assets/compositor.css">
+  <link rel="stylesheet" href="{{ asset_prefix }}pagefind/pagefind-ui.css">
   <script>
     /* Anti-flash: apply a stored theme choice before first paint. */
     try { var t = localStorage.getItem('theme'); if (t) document.documentElement.setAttribute('data-theme', t); } catch (e) {}
@@ -22,6 +23,7 @@
     <article id="doc" role="document" data-pagefind-body>{{ body|safe }}</article>
     {% if has_toc %}<aside id="toc" data-pagefind-ignore><p class="toc-title">On this page</p>{{ toc_html|safe }}</aside>{% endif %}
   </main>
+  <script src="{{ asset_prefix }}pagefind/pagefind-ui.js"></script>
   <script src="{{ asset_prefix }}assets/compositor.js" defer></script>
 </body>
 </html>
