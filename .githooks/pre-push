@@ -2,9 +2,8 @@
 # docgate pre-push gate. Activated per clone via core.hooksPath -> .githooks.
 # Fails closed: if docgate can't be found the push is blocked.
 #
-# HOST CHOICE (the line marked below): public repo -> github.com/lockyc/docgate;
-# private repo -> an internal host. The public host is the only one an
-# outside clone / CI can reach, so a public repo MUST use it.
+# This is a public repo, so the gate installs from the public host,
+# github.com/lockyc/docgate — the only host an outside clone / CI can reach.
 set -euo pipefail
 
 # Resolve docgate even under a minimal hook PATH. Git runs hooks with whatever
