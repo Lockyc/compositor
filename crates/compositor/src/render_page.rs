@@ -1,9 +1,12 @@
 use crate::config::SiteConfig;
 use askama::Template;
-use render_core::markdown::TocEntry;
+use render_core::frontmatter::split_frontmatter;
+use render_core::markdown::{render_markdown, TocEntry};
 use render_core::nav::{NavNode, NavTree};
 use render_core::site::{Page, SiteModel};
-use std::path::PathBuf;
+use render_core::LinkPolicy;
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 #[derive(Template)]
 #[template(path = "page.html")]
@@ -98,16 +101,24 @@ fn toc_to_html(toc: &[TocEntry]) -> String {
 }
 
 /// Ensure the site has a home page served at `/` (`index.html`). compositor owns
-/// the shell, so a docs tree with no landing page still gets a working `/`:
-/// - a root `index.md` already produces `index.html` — nothing to add;
-/// - otherwise a root `index`/`home`/`readme` file (any case) is promoted to the
-///   home, aliased at `index.html` while keeping its own url so links still work;
-/// - otherwise a blank home — the shell renders the navigation menu with an empty
-///   body until a real landing page exists.
+/// the shell, so a docs tree with no landing page still gets a working `/`. The
+/// fallback chain, first match wins:
+/// 1. a docs-tree root `index.md` already produces `index.html` — nothing to add;
+/// 2. otherwise a docs-tree root `index`/`home`/`readme` (any case) is promoted,
+///    aliased at `index.html` while keeping its own url so links still work;
+/// 3. otherwise the **repo-root `README.md`** (any case), when the docs dir is a
+///    subdir rather than the repo root itself — rendered as the landing page;
+/// 4. otherwise a **generated index** — the site name over the nav as a link list
+///    — so `/` is never a blank body.
+///
+/// The repo README (tier 3) is rendered with the *lenient* link policy: it is
+/// landing chrome sourced from outside the docs tree, so its links don't share
+/// the docs tree's url base and must not be validated against it (nor hard-fail a
+/// strict `build`).
 ///
 /// Returned (when `Some`) as an extra page for callers to render alongside the
 /// real pages; it is intentionally not part of the nav tree.
-pub fn resolve_home(site: &SiteModel) -> Option<Page> {
+pub fn resolve_home(site: &SiteModel, cfg: &SiteConfig, project_dir: &Path) -> Option<Page> {
     if site.pages.iter().any(|p| p.url == "index.html") {
         return None;
     }
@@ -122,13 +133,71 @@ pub fn resolve_home(site: &SiteModel) -> Option<Page> {
             });
         }
     }
+    // Tier 3 only applies when the docs dir is a subdir: when it *is* the repo
+    // root (a bare Markdown folder), a root README is already a docs page and
+    // was handled by the promotion loop above.
+    if cfg.docs_path(project_dir) != project_dir {
+        if let Some(home) = repo_readme_home(project_dir, &cfg.site_name) {
+            return Some(home);
+        }
+    }
+    Some(generated_index(&cfg.site_name, &site.nav))
+}
+
+/// Render the repo-root `README.md` (filename matched case-insensitively) into a
+/// home page, or `None` if there is no README to read/render.
+fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
+    let path = find_repo_readme(project_dir)?;
+    let raw = std::fs::read_to_string(&path).ok()?;
+    let (fm, body) = split_frontmatter(&raw);
+    // Empty known-urls + lenient: the README is not part of the strict docs link
+    // contract, and its link base differs from the docs tree's.
+    let rendered =
+        render_markdown(&body, Path::new(""), &HashSet::new(), LinkPolicy::Lenient).ok()?;
+    let title = fm
+        .title
+        .or(rendered.first_h1)
+        .unwrap_or_else(|| site_name.to_string());
     Some(Page {
         url: "index.html".to_string(),
         rel_path: PathBuf::from("index.md"),
-        title: "Home".to_string(),
-        html: String::new(),
-        toc: vec![],
+        title,
+        html: rendered.html,
+        toc: rendered.toc,
     })
+}
+
+/// A top-level `*.md` file in `dir` whose stem is `readme` (case-insensitive).
+fn find_repo_readme(dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.extension().and_then(|e| e.to_str()) == Some("md")
+                && p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.eq_ignore_ascii_case("readme"))
+        })
+}
+
+/// A generated landing page for a docs tree with no authored home: the site name
+/// as an `<h1>`, followed by the nav rendered as a root-relative link list (the
+/// same `nav_to_html` the sidebar uses — one source of truth for the markup).
+fn generated_index(site_name: &str, nav: &NavTree) -> Page {
+    let html = format!(
+        "<h1>{}</h1>\n{}",
+        html_escape(site_name),
+        nav_to_html(nav, "", "index.html")
+    );
+    Page {
+        url: "index.html".to_string(),
+        rel_path: PathBuf::from("index.md"),
+        title: site_name.to_string(),
+        html,
+        toc: vec![],
+    }
 }
 
 /// A root-level (no subdirectory) page whose filename stem equals `stem`,
@@ -211,43 +280,107 @@ mod tests {
         }
     }
 
-    #[test]
-    fn no_home_added_when_index_exists() {
-        let s = site(vec![page("index.md", "index.html", "x")]);
-        assert!(resolve_home(&s).is_none());
+    fn cfg_named(name: &str) -> SiteConfig {
+        SiteConfig {
+            site_name: name.to_string(),
+            docs_dir: Some("docs".to_string()),
+            ..SiteConfig::default()
+        }
+    }
+
+    /// A fresh temp project dir with a `docs/` subdir (so `docs_path` differs
+    /// from the project root and the repo-root README tier is reachable).
+    fn scratch(tag: &str) -> PathBuf {
+        let p = std::env::temp_dir().join(format!("compositor-home-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(p.join("docs")).unwrap();
+        p
     }
 
     #[test]
-    fn readme_is_promoted_to_home_any_case() {
+    fn no_home_added_when_index_exists() {
+        let s = site(vec![page("index.md", "index.html", "x")]);
+        // Short-circuits before touching the filesystem, so any path works.
+        assert!(resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent")).is_none());
+    }
+
+    #[test]
+    fn docs_tree_readme_is_promoted_to_home_any_case() {
         let s = site(vec![page("README.md", "README.html", "readme body")]);
-        let home = resolve_home(&s).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent")).unwrap();
         assert_eq!(home.url, "index.html");
         assert_eq!(home.html, "readme body");
     }
 
     #[test]
-    fn home_md_beats_readme() {
+    fn docs_tree_home_md_beats_readme() {
         let s = site(vec![
             page("readme.md", "readme.html", "R"),
             page("home.md", "home.html", "H"),
         ]);
-        assert_eq!(resolve_home(&s).unwrap().html, "H");
+        assert_eq!(
+            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"))
+                .unwrap()
+                .html,
+            "H"
+        );
     }
 
     #[test]
-    fn blank_home_when_no_landing_candidate() {
+    fn repo_root_readme_becomes_home_when_docs_is_a_subdir() {
+        let tmp = scratch("repo-readme");
+        std::fs::write(tmp.join("README.md"), "# Welcome\n\nhello world").unwrap();
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
         assert_eq!(home.url, "index.html");
-        assert!(home.html.is_empty());
-        assert_eq!(home.title, "Home");
+        assert_eq!(home.title, "Welcome");
+        assert!(home.html.contains("hello world"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_readme_found_case_insensitively() {
+        let tmp = scratch("repo-readme-case");
+        std::fs::write(tmp.join("readme.md"), "# Casing\n\nbody").unwrap();
+        let s = site(vec![page("guide.md", "guide.html", "g")]);
+        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        assert_eq!(home.title, "Casing");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn docs_tree_candidate_beats_repo_root_readme() {
+        // A purpose-authored docs landing wins over the repo-root README.
+        let tmp = scratch("docs-beats-repo");
+        std::fs::write(tmp.join("README.md"), "# Repo\n\nrepo body").unwrap();
+        let s = site(vec![page("home.md", "home.html", "docs home body")]);
+        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        assert_eq!(home.html, "docs home body");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn generated_index_when_no_landing_candidate() {
+        // No docs landing and no repo-root README -> a generated index, not blank.
+        let tmp = scratch("gen-index");
+        let s = site(vec![page("guide.md", "guide.html", "g")]);
+        let home = resolve_home(&s, &cfg_named("My Site"), &tmp).unwrap();
+        assert_eq!(home.url, "index.html");
+        assert_eq!(home.title, "My Site");
+        assert!(home.html.contains("<h1>My Site</h1>"));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
     fn nested_readme_is_not_promoted() {
-        // A README inside a subdirectory must not become the site home.
+        // A README inside a subdirectory must not become the site home; with no
+        // repo-root README either, the home is the generated index.
+        let tmp = scratch("nested-readme");
         let s = site(vec![page("sub/readme.md", "sub/readme.html", "R")]);
-        assert!(resolve_home(&s).unwrap().html.is_empty());
+        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        assert!(!home.html.contains("R"));
+        assert!(home.html.contains("<h1>S</h1>"));
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     fn page_with_toc(url: &str, html: &str, toc: Vec<render_core::markdown::TocEntry>) -> Page {

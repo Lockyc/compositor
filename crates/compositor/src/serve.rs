@@ -48,10 +48,11 @@ fn inject_reload(html: &str, epoch: u64) -> String {
 pub(crate) fn build_pages(
     cfg: &SiteConfig,
     site: &SiteModel,
+    project_dir: &Path,
     epoch: u64,
 ) -> HashMap<String, String> {
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(site);
+    let home = crate::render_page::resolve_home(site, cfg, project_dir);
     site.pages
         .iter()
         .chain(home.as_ref())
@@ -190,11 +191,11 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
 /// only the single watcher thread ever calls this, so read-then-write is
 /// race-free — and the write-guard critical section is limited to the two
 /// assignments so a panic during rendering can't poison the lock.
-fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path) {
+fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, project_dir: &Path) {
     match build_site(docs, LinkPolicy::Lenient) {
         Ok(site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
-            let pages = build_pages(cfg, &site, next_epoch);
+            let pages = build_pages(cfg, &site, project_dir, next_epoch);
             let mut s = state.write().expect("state lock");
             s.pages = pages;
             s.epoch = next_epoch;
@@ -206,7 +207,12 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path) {
 /// Watch `docs` and rebuild on change. A burst of editor saves is debounced
 /// into a single rebuild by draining the event channel over a ~200ms quiet
 /// window before rebuilding.
-fn spawn_watcher(state: Arc<RwLock<ServedSite>>, cfg: SiteConfig, docs: PathBuf) {
+fn spawn_watcher(
+    state: Arc<RwLock<ServedSite>>,
+    cfg: SiteConfig,
+    docs: PathBuf,
+    project_dir: PathBuf,
+) {
     std::thread::spawn(move || {
         let (tx, rx) = std::sync::mpsc::channel();
         let mut watcher =
@@ -237,7 +243,7 @@ fn spawn_watcher(state: Arc<RwLock<ServedSite>>, cfg: SiteConfig, docs: PathBuf)
                 .recv_timeout(std::time::Duration::from_millis(200))
                 .is_ok()
             {}
-            rebuild_into(&state, &cfg, &docs);
+            rebuild_into(&state, &cfg, &docs, &project_dir);
         }
     });
 }
@@ -277,11 +283,16 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
 
     let site = build_site(&docs, LinkPolicy::Lenient)?;
     let state = Arc::new(RwLock::new(ServedSite {
-        pages: build_pages(&cfg, &site, 0),
+        pages: build_pages(&cfg, &site, project_dir, 0),
         epoch: 0,
     }));
 
-    spawn_watcher(Arc::clone(&state), cfg, docs.clone());
+    spawn_watcher(
+        Arc::clone(&state),
+        cfg,
+        docs.clone(),
+        project_dir.to_path_buf(),
+    );
 
     let server = bind_server(host, port)?;
     let listen = server.server_addr();
@@ -449,14 +460,14 @@ mod tests {
         };
         let site = build_site(&docs, LinkPolicy::Lenient).unwrap();
         let state = RwLock::new(ServedSite {
-            pages: build_pages(&cfg, &site, 0),
+            pages: build_pages(&cfg, &site, &tmp, 0),
             epoch: 0,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
         // A change lands; one rebuild must swap content and advance the epoch.
         std::fs::write(docs.join("index.md"), "# Two").unwrap();
-        rebuild_into(&state, &cfg, &docs);
+        rebuild_into(&state, &cfg, &docs, &tmp);
 
         {
             let s = state.read().unwrap();

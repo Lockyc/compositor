@@ -17,7 +17,7 @@ pub fn run_build(project_dir: &Path) -> Result<()> {
     let site = build_site(&docs, LinkPolicy::Strict)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(&site);
+    let home = crate::render_page::resolve_home(&site, &cfg, project_dir);
     for page in site.pages.iter().chain(home.as_ref()) {
         let html = render_page(&cfg, &site.nav, page);
         let dest = out.join(&page.url);

@@ -15,9 +15,11 @@ no `compositor.toml` and no special files to work:
 - **No config** → defaults are synthesized (`site_name` from the folder; docs from
   `docs/` if present, else the dir itself). A *malformed* `compositor.toml` is still a
   hard, named error — only a *missing* one falls back. (See `config::SiteConfig::load`.)
-- **No home page** → `/` still renders the shell with the full navigation menu and a
-  blank body. A root `index`/`home`/`readme` file (any case) is promoted to the home
-  when present; otherwise the home is generated. (See `render_page::resolve_home`.)
+- **No home page** → `/` always resolves to a working landing, first match wins:
+  a docs-root `index`/`home`/`readme` (any case) is promoted; else the **repo-root
+  `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);
+  else a **generated index** — the site name over the nav as a link list. Never a blank
+  body. (See `render_page::resolve_home`.)
 - **A broken internal link** → degrades to a 404 under `serve`, never a halt (below).
 
 The Markdown author writes content; compositor supplies everything around it. When a
