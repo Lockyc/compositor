@@ -21,8 +21,9 @@ enum Command {
         dir: PathBuf,
         #[arg(long, default_value = "127.0.0.1")]
         host: String,
-        #[arg(long, default_value_t = 8000)]
-        port: u16,
+        /// Port to bind. Omit to let the OS pick a free one (printed on start).
+        #[arg(long)]
+        port: Option<u16>,
         #[arg(long)]
         open: bool,
     },

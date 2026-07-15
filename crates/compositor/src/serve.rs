@@ -260,7 +260,18 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new(cmd).arg(url).spawn();
 }
 
-pub fn run_serve(project_dir: &Path, host: &str, port: u16, open: bool) -> Result<()> {
+/// Bind the HTTP server. `None` port binds `:0` so the OS assigns a free
+/// ephemeral port (the default — never fails on "address in use"); `Some(p)`
+/// binds exactly `p` and errors loudly if it is taken (honoring `--port`).
+fn bind_server(host: &str, port: Option<u16>) -> Result<Server> {
+    let requested = port.unwrap_or(0);
+    Server::http(format!("{host}:{requested}")).map_err(|e| match port {
+        Some(p) => anyhow!("binding {host}:{p}: {e}"),
+        None => anyhow!("binding {host} on an ephemeral port: {e}"),
+    })
+}
+
+pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) -> Result<()> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
@@ -272,8 +283,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: u16, open: bool) -> Resul
 
     spawn_watcher(Arc::clone(&state), cfg, docs.clone());
 
-    let server = Server::http(format!("{host}:{port}"))
-        .map_err(|e| anyhow!("binding {host}:{port}: {e}"))?;
+    let server = bind_server(host, port)?;
     let listen = server.server_addr();
     println!("compositor serving {} on http://{listen}/", docs.display());
     if open {
@@ -295,6 +305,25 @@ mod tests {
         assert_eq!(request_url(""), "index.html");
         assert_eq!(request_url("/cli/tar.html"), "cli/tar.html");
         assert_eq!(request_url("/cli/"), "cli/index.html");
+    }
+
+    #[test]
+    fn bind_server_none_picks_a_free_ephemeral_port() {
+        // No --port: the OS assigns a free port, so the bound address must be
+        // non-zero and reachable.
+        let server = bind_server("127.0.0.1", None).expect("ephemeral bind");
+        let port = server.server_addr().to_ip().unwrap().port();
+        assert_ne!(port, 0, "ephemeral bind must resolve to a real port");
+    }
+
+    #[test]
+    fn bind_server_explicit_taken_port_errors() {
+        // --port N honors intent: if N is already taken, binding it again is a
+        // hard error rather than silently falling back to another port.
+        let held = bind_server("127.0.0.1", None).expect("hold a port");
+        let taken = held.server_addr().to_ip().unwrap().port();
+        let err = bind_server("127.0.0.1", Some(taken));
+        assert!(err.is_err(), "rebinding a taken explicit port must error");
     }
 
     #[test]

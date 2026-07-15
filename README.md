@@ -48,8 +48,9 @@ every change:
 ./target/release/compositor serve --dir path/to/docs-repo --open
 ```
 
-(`--host` and `--port` default to `127.0.0.1:8000`; `--open` launches the default
-browser.)
+(`--host` defaults to `127.0.0.1`; omit `--port` to let the OS pick a free port —
+the bound URL is printed on start — or pass `--port` to pin one. `--open` launches
+the default browser.)
 
 ## Development
 

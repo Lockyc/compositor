@@ -121,5 +121,5 @@ moves.
 
 - Build: `cargo build`
 - Test: `cargo test`
-- Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`, `--port 8000`, `--open`)
+- Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
 - Pre-merge gate: `just gate` (fmt-check + clippy + tests)
