@@ -99,8 +99,8 @@ crates/
 
 Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
 admonitions, explicit-`nav` config override, the `serve` dev server, host rollout.
-No functionality duplicated from `docgate`: `build` fails only on an unresolvable
-internal link (a render error) — orphan/graph auditing stays docgate's.
+No functionality duplicated from `docgraph`: `build` fails only on an unresolvable
+internal link (a render error) — orphan/graph auditing stays docgraph's.
 
 ## Branching & releases
 
