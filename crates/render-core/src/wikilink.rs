@@ -293,6 +293,34 @@ mod tests {
     }
 
     #[test]
+    fn root_page_stem_does_not_outrank_another_pages_title() {
+        // Regression for tier-0 scoping (commit 70548e4): a root page's bare name must
+        // NOT sit at the highest-precedence tier and mask another page's title match on
+        // the same key. Root `setup.md` (title "Root Setup", stem "setup") plus
+        // `guide/overview.md` with title "Setup": `[[Setup]]` must resolve to overview
+        // via the tier-1 title, not to the root page via a stray tier-0 key.
+        let mut w = WikiIndex::new();
+        w.add_page(
+            "setup.html",
+            "Root Setup",
+            &PathBuf::from("setup.md"),
+            "setup",
+            &[],
+        );
+        w.add_page(
+            "guide/overview.html",
+            "Setup",
+            &PathBuf::from("guide/overview.md"),
+            "overview",
+            &[],
+        );
+        match w.resolve("setup") {
+            WikiResolution::Resolved(t) => assert_eq!(t.url, "guide/overview.html"),
+            other => panic!("frontmatter title should win over a root page's stem, got {other:?}"),
+        }
+    }
+
+    #[test]
     fn relative_url_computes_page_relative_href() {
         assert_eq!(
             relative_url(Path::new("guide"), "admin/setup.html"),
