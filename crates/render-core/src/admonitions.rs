@@ -14,7 +14,7 @@ enum Marker {
 
 struct Opener {
     marker: Marker,
-    classes: String,     // space-joined, e.g. "danger inline"
+    classes: String,       // space-joined, e.g. "danger inline"
     title: Option<String>, // None = default; Some("") = suppress; Some(s) = literal
 }
 
@@ -61,7 +61,7 @@ pub fn preprocess_admonitions(src: &str) -> String {
             }
             let body_src = body_lines.join("\n");
             let body = preprocess_admonitions(&body_src); // recurse for nesting
-            // A leading blank line guarantees the wrapper starts a fresh HTML block.
+                                                          // A leading blank line guarantees the wrapper starts a fresh HTML block.
             if !out.is_empty() && !out.ends_with("\n\n") {
                 out.push('\n');
             }
@@ -80,7 +80,8 @@ pub fn preprocess_admonitions(src: &str) -> String {
 }
 
 fn deindent4(line: &str) -> Option<&str> {
-    line.strip_prefix("    ").or_else(|| line.strip_prefix('\t'))
+    line.strip_prefix("    ")
+        .or_else(|| line.strip_prefix('\t'))
 }
 
 fn fence_open(line: &str) -> Option<(char, usize)> {
@@ -198,7 +199,10 @@ mod tests {
     fn static_block_default_title() {
         let out = preprocess_admonitions("!!! note\n    Body text.\n");
         assert!(out.contains("<div class=\"admonition note\">"), "{out}");
-        assert!(out.contains("<p class=\"admonition-title\">Note</p>"), "{out}");
+        assert!(
+            out.contains("<p class=\"admonition-title\">Note</p>"),
+            "{out}"
+        );
         assert!(out.contains("Body text."), "{out}");
         assert!(out.contains("</div>"), "{out}");
     }
@@ -207,7 +211,10 @@ mod tests {
     fn custom_title_used_verbatim() {
         let out = preprocess_admonitions("!!! warning \"Be careful\"\n    Body.\n");
         assert!(out.contains("<div class=\"admonition warning\">"), "{out}");
-        assert!(out.contains("<p class=\"admonition-title\">Be careful</p>"), "{out}");
+        assert!(
+            out.contains("<p class=\"admonition-title\">Be careful</p>"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -220,7 +227,10 @@ mod tests {
     #[test]
     fn multiple_classes_passed_through() {
         let out = preprocess_admonitions("!!! danger inline\n    Body.\n");
-        assert!(out.contains("<div class=\"admonition danger inline\">"), "{out}");
+        assert!(
+            out.contains("<div class=\"admonition danger inline\">"),
+            "{out}"
+        );
         // Default title is the first class word, capitalized.
         assert!(out.contains(">Danger</p>"), "{out}");
     }
@@ -234,7 +244,8 @@ mod tests {
 
     #[test]
     fn nested_admonition_recurses() {
-        let src = "!!! note \"Outer\"\n    Outer body.\n\n    !!! tip \"Inner\"\n        Inner body.\n";
+        let src =
+            "!!! note \"Outer\"\n    Outer body.\n\n    !!! tip \"Inner\"\n        Inner body.\n";
         let out = preprocess_admonitions(src);
         assert!(out.contains("<div class=\"admonition note\">"), "{out}");
         assert!(out.contains("<div class=\"admonition tip\">"), "{out}");
@@ -288,7 +299,10 @@ mod tests {
         let out = preprocess_admonitions("??? note\n    Body text.\n");
         assert!(out.contains("<details class=\"admonition note\">"), "{out}");
         assert!(!out.contains(" open"), "{out}");
-        assert!(out.contains("<summary class=\"admonition-title\">Note</summary>"), "{out}");
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
+        );
         assert!(out.contains("Body text."), "{out}");
         assert!(out.contains("</details>"), "{out}");
     }
@@ -296,8 +310,14 @@ mod tests {
     #[test]
     fn collapsible_open_default_title() {
         let out = preprocess_admonitions("???+ note\n    Body text.\n");
-        assert!(out.contains("<details class=\"admonition note\" open>"), "{out}");
-        assert!(out.contains("<summary class=\"admonition-title\">Note</summary>"), "{out}");
+        assert!(
+            out.contains("<details class=\"admonition note\" open>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
+        );
         assert!(out.contains("Body text."), "{out}");
         assert!(out.contains("</details>"), "{out}");
     }
@@ -306,12 +326,24 @@ mod tests {
     fn collapsible_with_custom_title() {
         let src_closed = "??? warning \"Be careful\"\n    Body.\n";
         let out_closed = preprocess_admonitions(src_closed);
-        assert!(out_closed.contains("<details class=\"admonition warning\">"), "{out_closed}");
-        assert!(out_closed.contains("<summary class=\"admonition-title\">Be careful</summary>"), "{out_closed}");
+        assert!(
+            out_closed.contains("<details class=\"admonition warning\">"),
+            "{out_closed}"
+        );
+        assert!(
+            out_closed.contains("<summary class=\"admonition-title\">Be careful</summary>"),
+            "{out_closed}"
+        );
 
         let src_open = "???+ tip \"Pro tip\"\n    Body.\n";
         let out_open = preprocess_admonitions(src_open);
-        assert!(out_open.contains("<details class=\"admonition tip\" open>"), "{out_open}");
-        assert!(out_open.contains("<summary class=\"admonition-title\">Pro tip</summary>"), "{out_open}");
+        assert!(
+            out_open.contains("<details class=\"admonition tip\" open>"),
+            "{out_open}"
+        );
+        assert!(
+            out_open.contains("<summary class=\"admonition-title\">Pro tip</summary>"),
+            "{out_open}"
+        );
     }
 }
