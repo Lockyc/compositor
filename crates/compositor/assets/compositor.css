@@ -168,6 +168,12 @@
     inset: 3.2rem 0 0 0;
     z-index: 4;
     max-height: none;
+    /* Reset the desktop sidebar's `align-self: start`. On a fixed box with both
+       top and bottom set, CSS box-alignment `start` shrinks it to content height
+       instead of stretching to the inset rect — so the opaque drawer would only
+       cover down to the last menu item and page content would show through below
+       it. `stretch` fills the viewport so the drawer reads as a solid panel. */
+    align-self: stretch;
     padding: 1.5rem;
     background: var(--pico-background-color);
     transform: translateX(-100%);
