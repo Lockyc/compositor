@@ -1,4 +1,5 @@
 use render_core::markdown::{render_markdown, LinkPolicy};
+use render_core::wikilink::WikiIndex;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -13,6 +14,7 @@ fn rewrites_relative_md_link_to_html() {
         "[tar](tar.md)",
         Path::new("cli"),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     )
     .unwrap();
@@ -26,6 +28,7 @@ fn leaves_external_links_untouched() {
         "[x](https://example.com)",
         Path::new(""),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     )
     .unwrap();
@@ -39,6 +42,7 @@ fn errors_on_unresolvable_internal_link() {
         "[gone](missing.md)",
         Path::new("cli"),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     );
     assert!(err.is_err());
@@ -53,6 +57,7 @@ fn lenient_policy_renders_unresolvable_link_as_broken_html() {
         "[gone](missing.md)",
         Path::new("cli"),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Lenient,
     )
     .unwrap();
@@ -70,6 +75,7 @@ fn rewrites_dotdot_relative_link_using_original_relative_path() {
         "[o](../other.md)",
         Path::new("cli/sub"),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     )
     .unwrap();
@@ -89,6 +95,7 @@ fn only_the_trailing_md_extension_is_swapped_not_earlier_occurrences() {
         "[n](notes.md.md)",
         Path::new(""),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     )
     .unwrap();
@@ -102,6 +109,7 @@ fn preserves_anchor_fragment_on_rewritten_link() {
         "[s](tar.md#sec)",
         Path::new("cli"),
         &known,
+        &WikiIndex::new(),
         LinkPolicy::Strict,
     )
     .unwrap();

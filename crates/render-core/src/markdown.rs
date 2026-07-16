@@ -1,10 +1,12 @@
+use crate::wikilink::{relative_url, WikiIndex, WikiResolution, WikiTarget};
 use anyhow::{anyhow, Result};
-use comrak::nodes::{AstNode, NodeValue};
+use comrak::nodes::{AstNode, NodeLink, NodeValue, NodeWikiLink};
 use comrak::plugins::syntect::SyntectAdapter;
 use comrak::{format_html_with_plugins, parse_document, Anchorizer, Arena, Options, Plugins};
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 
+#[derive(Debug)]
 pub struct Rendered {
     pub html: String,
     pub first_h1: Option<String>,
@@ -37,13 +39,24 @@ pub fn comrak_options<'c>() -> Options<'c> {
     // comrak's emitted heading ids are the bare Anchorizer slug with no
     // prefix — changing this string here would desync TOC hrefs from anchors.
     o.extension.header_ids = Some(String::new());
+    o.extension.wikilinks_title_after_pipe = true;
     o
+}
+
+/// Parse just enough to return the first H1's text — used by `build_site` pass 1
+/// to resolve a page's title before the full render pass.
+pub fn first_h1(body: &str) -> Option<String> {
+    let arena = Arena::new();
+    let options = comrak_options();
+    let root = parse_document(&arena, body, &options);
+    find_first_h1(root)
 }
 
 pub fn render_markdown(
     body: &str,
     page_dir: &Path,
     known_urls: &HashSet<String>,
+    wiki: &WikiIndex,
     policy: LinkPolicy,
 ) -> Result<Rendered> {
     let arena = Arena::new();
@@ -53,21 +66,46 @@ pub fn render_markdown(
     let first_h1 = find_first_h1(root);
     let toc = collect_toc(root);
 
+    // First pass (read-only w.r.t. tree shape): rewrite md-link urls in place and
+    // plan each wikilink's replacement. We defer tree surgery (detach/append) to a
+    // second pass so we never mutate structure while iterating descendants.
+    let mut wl_actions: Vec<(&AstNode, WikiAction)> = Vec::new();
     for node in root.descendants() {
-        let new_url = {
+        enum Kind {
+            Link(Option<String>),
+            Wiki(WikiAction),
+            None,
+        }
+        let kind = {
             let data = node.data.borrow();
-            if let NodeValue::Link(ref link) = data.value {
-                rewrite_link(&link.url, page_dir, known_urls, policy)?
-            } else {
-                None
+            match &data.value {
+                NodeValue::Link(link) => {
+                    Kind::Link(rewrite_link(&link.url, page_dir, known_urls, policy)?)
+                }
+                NodeValue::WikiLink(wl) => Kind::Wiki(plan_wikilink(
+                    &wl.url,
+                    &text_of(node),
+                    page_dir,
+                    wiki,
+                    policy,
+                )?),
+                _ => Kind::None,
             }
         };
-        if let Some(new_url) = new_url {
-            let mut data = node.data.borrow_mut();
-            if let NodeValue::Link(ref mut link) = data.value {
-                link.url = new_url;
+        match kind {
+            Kind::Link(Some(new_url)) => {
+                let mut data = node.data.borrow_mut();
+                if let NodeValue::Link(ref mut link) = data.value {
+                    link.url = new_url;
+                }
             }
+            Kind::Wiki(action) => wl_actions.push((node, action)),
+            _ => {}
         }
+    }
+    // Second pass: apply wikilink tree surgery using the arena for new text nodes.
+    for (node, action) in wl_actions {
+        apply_wikilink(node, action, &arena);
     }
 
     let adapter = SyntectAdapter::new(Some("InspiredGitHub"));
@@ -130,6 +168,103 @@ fn rewrite_link(
         Some(f) => format!("{new_path}#{f}"),
         None => new_path,
     }))
+}
+
+/// The planned replacement for one `[[wikilink]]` node.
+enum WikiAction {
+    /// Resolved (or the lenient pick of an ambiguous set): become a plain `<a>`.
+    Link { href: String, text: String },
+    /// Unresolved under the lenient policy: stay a `WikiLink` with an empty url so
+    /// the formatter emits `<a href="" data-wikilink="true">…</a>` (the CSS hook).
+    Dead { text: String },
+}
+
+/// Decide what a wikilink becomes, or error under the strict policy.
+fn plan_wikilink(
+    raw_url: &str,
+    label: &str,
+    page_dir: &Path,
+    wiki: &WikiIndex,
+    policy: LinkPolicy,
+) -> Result<WikiAction> {
+    // comrak percent-encodes the parsed url; decode to recover the typed name.
+    let decoded = percent_encoding::percent_decode_str(raw_url)
+        .decode_utf8_lossy()
+        .into_owned();
+    let (name, frag) = match decoded.split_once('#') {
+        Some((n, f)) => (n, Some(f)),
+        None => (decoded.as_str(), None),
+    };
+    // Bare `[[name]]` when comrak's default label equals the decoded url; a piped
+    // `[[name|label]]` differs, so the author's label is used verbatim.
+    let bare = label == decoded;
+
+    let make = |t: &WikiTarget| -> WikiAction {
+        let mut href = relative_url(page_dir, &t.url);
+        if let Some(f) = frag {
+            href.push('#');
+            href.push_str(f);
+        }
+        let text = if bare {
+            t.title.clone()
+        } else {
+            label.to_string()
+        };
+        WikiAction::Link { href, text }
+    };
+
+    match wiki.resolve(name) {
+        WikiResolution::Resolved(t) => Ok(make(&t)),
+        WikiResolution::Ambiguous(cands) => match policy {
+            LinkPolicy::Strict => Err(anyhow!(
+                "ambiguous wikilink: [[{name}]] matches {} (from {})",
+                cands
+                    .iter()
+                    .map(|c| c.url.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", "),
+                page_dir.display()
+            )),
+            LinkPolicy::Lenient => Ok(make(&cands[0])),
+        },
+        WikiResolution::Unresolved => match policy {
+            LinkPolicy::Strict => Err(anyhow!(
+                "unresolvable wikilink: [[{name}]] (from {})",
+                page_dir.display()
+            )),
+            LinkPolicy::Lenient => Ok(WikiAction::Dead {
+                text: if bare {
+                    name.to_string()
+                } else {
+                    label.to_string()
+                },
+            }),
+        },
+    }
+}
+
+/// Apply a planned wikilink action: replace the node's children with a single
+/// text node and swap its value to a plain `Link` (resolved) or leave it a
+/// `WikiLink` with an empty url (dead).
+fn apply_wikilink<'a>(node: &'a AstNode<'a>, action: WikiAction, arena: &'a Arena<AstNode<'a>>) {
+    for child in node.children() {
+        child.detach();
+    }
+    let (value, text) = match action {
+        WikiAction::Link { href, text } => (
+            NodeValue::Link(NodeLink {
+                url: href,
+                title: String::new(),
+            }),
+            text,
+        ),
+        WikiAction::Dead { text } => (
+            NodeValue::WikiLink(NodeWikiLink { url: String::new() }),
+            text,
+        ),
+    };
+    node.data.borrow_mut().value = value;
+    node.append(arena.alloc(NodeValue::Text(text).into()));
 }
 
 /// Swap a *trailing* `.md` for `.html`, leaving any earlier `.md` substring
@@ -205,6 +340,20 @@ fn text_of<'a>(node: &'a AstNode<'a>) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::wikilink::WikiIndex;
+    use std::path::PathBuf;
+
+    fn wiki_fixture() -> WikiIndex {
+        let mut w = WikiIndex::new();
+        w.add_page(
+            "guide/getting-started.html",
+            "Getting Started",
+            &PathBuf::from("guide/getting-started.md"),
+            "getting-started",
+            &[],
+        );
+        w
+    }
 
     #[test]
     fn renders_gfm_table() {
@@ -212,6 +361,7 @@ mod tests {
             "| a | b |\n|---|---|\n| 1 | 2 |",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -224,6 +374,7 @@ mod tests {
             "```rust\nfn main() {}\n```",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -237,6 +388,7 @@ mod tests {
             "# Title Here\n\nbody",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -249,6 +401,7 @@ mod tests {
             "## Sub only\n\nbody",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -261,6 +414,7 @@ mod tests {
             "# Prettier `just` recipe list (`x.sh`)",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -276,6 +430,7 @@ mod tests {
             "# Title\n\n## Alpha\n\ntext\n\n### Beta\n\n#### Deep\n\ntext",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -291,6 +446,7 @@ mod tests {
             "## Getting Started\n\ntext",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -313,6 +469,7 @@ mod tests {
             "## Dup\n\n## Dup\n\ntext",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
@@ -327,9 +484,179 @@ mod tests {
             "# Only H1\n\nbody with no sub-headings",
             Path::new(""),
             &HashSet::new(),
+            &WikiIndex::new(),
             LinkPolicy::Strict,
         )
         .unwrap();
         assert!(r.toc.is_empty());
+    }
+
+    #[test]
+    fn bare_wikilink_renders_target_title_as_link_text() {
+        // Typed as a stem; display text must be the resolved page's title.
+        let r = render_markdown(
+            "See [[getting-started]].",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html
+                .contains(r#"<a href="guide/getting-started.html">Getting Started</a>"#),
+            "got: {}",
+            r.html
+        );
+        // Resolved wikilinks are plain <a> — no data-wikilink attribute.
+        assert!(!r.html.contains("data-wikilink"));
+    }
+
+    #[test]
+    fn piped_wikilink_uses_author_label() {
+        let r = render_markdown(
+            "[[getting-started|start here]]",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html
+                .contains(r#"<a href="guide/getting-started.html">start here</a>"#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn wikilink_anchor_is_appended_to_href() {
+        let r = render_markdown(
+            "[[Getting Started#install]]",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html
+                .contains(r##"href="guide/getting-started.html#install""##),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn wikilink_href_is_page_relative() {
+        // A page in admin/ links to a page in guide/ -> ../ prefix.
+        let r = render_markdown(
+            "[[Getting Started]]",
+            Path::new("admin"),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"href="../guide/getting-started.html""#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn unresolved_wikilink_is_error_under_strict() {
+        let err = render_markdown(
+            "[[No Such Page]]",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("No Such Page"), "got: {err}");
+    }
+
+    #[test]
+    fn unresolved_wikilink_is_dead_anchor_under_lenient() {
+        let r = render_markdown(
+            "[[No Such Page]]",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Lenient,
+        )
+        .unwrap();
+        // Neutered anchor keeps the data-wikilink attribute and has no valid href.
+        assert!(
+            r.html.contains(r#"data-wikilink="true""#),
+            "got: {}",
+            r.html
+        );
+        assert!(r.html.contains("No Such Page"), "got: {}", r.html);
+    }
+
+    #[test]
+    fn ambiguous_wikilink_errors_under_strict_picks_first_under_lenient() {
+        let mut w = WikiIndex::new();
+        w.add_page(
+            "admin/setup.html",
+            "Admin",
+            &PathBuf::from("admin/setup.md"),
+            "setup",
+            &[],
+        );
+        w.add_page(
+            "ref/setup.html",
+            "Ref",
+            &PathBuf::from("ref/setup.md"),
+            "setup",
+            &[],
+        );
+
+        let err = render_markdown(
+            "[[setup]]",
+            Path::new(""),
+            &HashSet::new(),
+            &w,
+            LinkPolicy::Strict,
+        )
+        .unwrap_err();
+        assert!(
+            err.to_string().contains("admin/setup.html")
+                && err.to_string().contains("ref/setup.html"),
+            "got: {err}"
+        );
+
+        let r = render_markdown(
+            "[[setup]]",
+            Path::new(""),
+            &HashSet::new(),
+            &w,
+            LinkPolicy::Lenient,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"href="admin/setup.html""#),
+            "got: {}",
+            r.html
+        ); // sorted-first
+    }
+
+    #[test]
+    fn wikilink_inside_code_span_is_untouched() {
+        let r = render_markdown(
+            "`[[getting-started]]`",
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        // Comrak does not parse wikilinks inside code spans, so it stays literal text.
+        assert!(r.html.contains("[[getting-started]]"), "got: {}", r.html);
+        assert!(!r.html.contains("<a href"), "got: {}", r.html);
     }
 }

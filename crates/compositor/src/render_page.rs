@@ -152,8 +152,14 @@ fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
     let (fm, body) = split_frontmatter(&raw);
     // Empty known-urls + lenient: the README is not part of the strict docs link
     // contract, and its link base differs from the docs tree's.
-    let rendered =
-        render_markdown(&body, Path::new(""), &HashSet::new(), LinkPolicy::Lenient).ok()?;
+    let rendered = render_markdown(
+        &body,
+        Path::new(""),
+        &HashSet::new(),
+        &render_core::wikilink::WikiIndex::new(),
+        LinkPolicy::Lenient,
+    )
+    .ok()?;
     let title = fm
         .title
         .or(rendered.first_h1)

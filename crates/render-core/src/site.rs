@@ -5,6 +5,7 @@ use walkdir::WalkDir;
 use crate::frontmatter::split_frontmatter;
 use crate::markdown::{render_markdown, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
+use crate::wikilink::WikiIndex;
 
 pub struct Page {
     pub rel_path: PathBuf,
@@ -64,9 +65,13 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
         raws.push((rel, page_dir, stem, fm.title, body));
     }
     // Pass 2: render (links now resolvable).
+    // TODO(Task 4): populate a real WikiIndex from `raws` (titles/aliases/stems)
+    // in pass 1 and thread it through here; an empty index means every
+    // `[[wikilink]]` in the docs tree is currently unresolved.
+    let wiki = WikiIndex::new();
     let mut pages = Vec::new();
     for (rel, page_dir, stem, fm_title, body) in raws {
-        let rendered = render_markdown(&body, &page_dir, &known_urls, policy)?;
+        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy)?;
         let title = fm_title
             .clone()
             .or_else(|| rendered.first_h1.clone())
