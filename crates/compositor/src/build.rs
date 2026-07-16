@@ -14,7 +14,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
-    let site = build_site(&docs, policy)?;
+    let site = build_site(&docs, policy, &cfg.exclude)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(&site, &cfg, project_dir);
@@ -26,7 +26,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
         }
         std::fs::write(&dest, html)?;
     }
-    copy_assets(&docs, &out)?;
+    copy_assets(&docs, &out, &cfg.exclude)?;
     write_shell_assets(&out)?;
 
     run_pagefind(&out);
@@ -71,7 +71,7 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
 /// downloads, data files a page links to) is copied verbatim so those
 /// references resolve in the built site — matching MkDocs, which copies all
 /// non-doc files from the docs dir into the output.
-fn copy_assets(docs: &Path, out: &Path) -> Result<()> {
+fn copy_assets(docs: &Path, out: &Path, exclude: &[String]) -> Result<()> {
     // Skip the output tree: when the docs dir *is* the project dir (a bare
     // Markdown folder with no config), `out` sits inside `docs`, so without
     // this the walk would copy the freshly-written site back into itself.
@@ -88,6 +88,9 @@ fn copy_assets(docs: &Path, out: &Path) -> Result<()> {
             continue;
         }
         let rel = path.strip_prefix(docs)?;
+        if render_core::exclude::is_excluded(rel, exclude) {
+            continue;
+        }
         let dest = out.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
@@ -158,6 +161,34 @@ mod tests {
         assert!(
             tmp.join("site/a.html").exists(),
             "lenient build wrote the page"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn excluded_dir_is_not_rendered_or_copied() {
+        let tmp = scratch("exclude");
+        std::fs::create_dir_all(tmp.join("docs/superpowers")).unwrap();
+        std::fs::write(tmp.join("docs/keep.md"), "# Keep\n").unwrap();
+        std::fs::write(tmp.join("docs/superpowers/secret.md"), "# Secret\n").unwrap();
+        std::fs::write(tmp.join("docs/superpowers/note.txt"), "raw asset").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\nexclude = [\"superpowers/\"]\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Lenient).unwrap();
+
+        assert!(tmp.join("site/keep.html").exists(), "kept page rendered");
+        assert!(
+            !tmp.join("site/superpowers/secret.html").exists(),
+            "excluded md not rendered"
+        );
+        assert!(
+            !tmp.join("site/superpowers/note.txt").exists(),
+            "excluded asset not copied"
         );
 
         std::fs::remove_dir_all(&tmp).ok();

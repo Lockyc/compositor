@@ -2,6 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
+use crate::exclude::is_excluded;
 use crate::frontmatter::split_frontmatter;
 use crate::markdown::{render_markdown, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
@@ -41,7 +42,7 @@ fn url_for(rel: &Path) -> String {
     s
 }
 
-pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
+pub fn build_site(docs_dir: &Path, policy: LinkPolicy, exclude: &[String]) -> Result<SiteModel> {
     // Pass 1: collect page metadata + known urls.
     let mut raws = Vec::new(); // (rel, page_dir, stem, fm_title, body)
     let mut known_urls = std::collections::HashSet::new();
@@ -51,9 +52,12 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
             continue;
         }
+        let rel = path.strip_prefix(docs_dir)?.to_path_buf();
+        if is_excluded(&rel, exclude) {
+            continue;
+        }
         let raw = std::fs::read_to_string(path)?;
         let (fm, body) = split_frontmatter(&raw);
-        let rel = path.strip_prefix(docs_dir)?.to_path_buf();
         let page_dir = rel.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
         let stem = path
             .file_stem()

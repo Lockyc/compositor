@@ -192,7 +192,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
 /// race-free — and the write-guard critical section is limited to the two
 /// assignments so a panic during rendering can't poison the lock.
 fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, project_dir: &Path) {
-    match build_site(docs, LinkPolicy::Lenient) {
+    match build_site(docs, LinkPolicy::Lenient, &cfg.exclude) {
         Ok(site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
             let pages = build_pages(cfg, &site, project_dir, next_epoch);
@@ -281,7 +281,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
-    let site = build_site(&docs, LinkPolicy::Lenient)?;
+    let site = build_site(&docs, LinkPolicy::Lenient, &cfg.exclude)?;
     let state = Arc::new(RwLock::new(ServedSite {
         pages: build_pages(&cfg, &site, project_dir, 0),
         epoch: 0,
@@ -458,7 +458,7 @@ mod tests {
             docs_dir: Some("docs".to_string()),
             ..Default::default()
         };
-        let site = build_site(&docs, LinkPolicy::Lenient).unwrap();
+        let site = build_site(&docs, LinkPolicy::Lenient, &[]).unwrap();
         let state = RwLock::new(ServedSite {
             pages: build_pages(&cfg, &site, &tmp, 0),
             epoch: 0,
