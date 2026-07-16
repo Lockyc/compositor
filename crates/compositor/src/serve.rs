@@ -366,6 +366,107 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     Ok(())
 }
 
+/// A running site: bound, serving, and watching — shut down on demand.
+///
+/// Returned by [`serve_handle`] once the port is bound, so a host app can start a site and
+/// immediately point a webview at `port`. Shutdown is idempotent and also runs on drop, so a
+/// dropped handle never leaks its threads.
+pub struct ServeHandle {
+    /// The bound loopback port. Assigned by the OS (`:0`), so it is never "address in use".
+    pub port: u16,
+    server: Option<Arc<Server>>,
+    serve_thread: Option<JoinHandle<()>>,
+    watcher: Option<(RecommendedWatcher, JoinHandle<()>)>,
+}
+
+impl ServeHandle {
+    /// Stop serving and watching, and wait for both threads to exit.
+    pub fn shutdown(mut self) {
+        self.stop();
+    }
+
+    fn stop(&mut self) {
+        // Watcher first: dropping it drops the notify sender, which is what ends the rebuild
+        // thread (see `spawn_watcher`). There is no other exit.
+        if let Some((watcher, thread)) = self.watcher.take() {
+            drop(watcher);
+            let _ = thread.join();
+        }
+        // `unblock` ends `incoming_requests`, which returns `serve_loop`.
+        if let Some(server) = &self.server {
+            server.unblock();
+        }
+        if let Some(thread) = self.serve_thread.take() {
+            let _ = thread.join();
+        }
+
+        // Dropping our last `Server` reference triggers tiny_http's own `Drop for Server`,
+        // which signals *its* internal accept thread and self-connects to unblock it — but
+        // returns without waiting for that thread to actually exit and release the listening
+        // socket (tiny_http exposes no join handle for it). So the OS-level release is
+        // asynchronous relative to this function returning. Poll-verify the port is truly free
+        // (bounded, not indefinite) rather than assume the drop above was synchronous — a real
+        // postcondition check, not a fixed delay: it returns the instant the port is free, and
+        // only degrades to the full bound if release is unusually slow.
+        //
+        // The probe uses a plain `std::net::TcpListener`, not another `tiny_http::Server` — a
+        // std listener's drop is a synchronous fd close with no background thread, so the probe
+        // can't reintroduce the very race it's checking for.
+        if let Some(server) = self.server.take() {
+            drop(server);
+            let port = self.port;
+            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+            loop {
+                if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
+                    break;
+                }
+                if std::time::Instant::now() >= deadline {
+                    eprintln!("warning: port {port} still bound 2s after ServeHandle shutdown");
+                    break;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(5));
+            }
+        }
+    }
+}
+
+impl Drop for ServeHandle {
+    fn drop(&mut self) {
+        self.stop();
+    }
+}
+
+/// Serve `project_dir` on an OS-assigned loopback port, returning once bound.
+///
+/// The non-blocking counterpart to [`run_serve`], for hosts embedding many sites in one
+/// process. Both build from the same `setup`, so the CLI and the embedded path cannot drift.
+pub fn serve_handle(project_dir: &Path) -> Result<ServeHandle> {
+    let Serving {
+        server,
+        state,
+        docs,
+        exclude,
+        watcher,
+    } = setup(project_dir, "127.0.0.1", None)?;
+
+    let port = server
+        .server_addr()
+        .to_ip()
+        .map(|addr| addr.port())
+        .ok_or_else(|| anyhow!("serve bound a non-IP address"))?;
+
+    let server = Arc::new(server);
+    let loop_server = Arc::clone(&server);
+    let serve_thread = std::thread::spawn(move || serve_loop(&loop_server, state, docs, exclude));
+
+    Ok(ServeHandle {
+        port,
+        server: Some(server),
+        serve_thread: Some(serve_thread),
+        watcher,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -607,6 +708,37 @@ mod tests {
         thread
             .join()
             .expect("rebuild thread must exit once its watcher is dropped");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn serve_handle_serves_then_releases_the_port() {
+        let tmp = std::env::temp_dir().join(format!("compositor-handle-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Handle\n").unwrap();
+
+        let h = serve_handle(&tmp).expect("serve_handle binds");
+        let port = h.port;
+        assert!(port > 0, "an ephemeral port must be reported");
+
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], port));
+        let page = get(addr, "/");
+        assert!(page.contains("200 OK"), "page resp: {page}");
+        assert!(
+            page.contains("/__reload"),
+            "live-reload must be injected: {page}"
+        );
+
+        h.shutdown();
+
+        // The port being re-bindable proves the serve thread actually exited, rather than
+        // shutdown() merely returning while the loop still holds the listener.
+        assert!(
+            tiny_http::Server::http(("127.0.0.1", port)).is_ok(),
+            "port {port} still bound after shutdown"
+        );
 
         std::fs::remove_dir_all(&tmp).ok();
     }
