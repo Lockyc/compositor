@@ -176,3 +176,45 @@
   #nav.is-open-on-mobile { transform: translateX(0); }
   .nav-open { overflow: hidden; }
 }
+
+/* --- Admonitions (MkDocs/Material `!!!` and `???`). The type word(s) become
+   classes; known types are tinted below, unknown types fall back to the primary
+   accent via the --adm-accent custom property default. */
+.admonition {
+  margin: 1rem 0;
+  padding: 0.6rem 1rem;
+  border-left: 0.25rem solid var(--adm-accent, var(--pico-primary));
+  border-radius: 0.2rem;
+  background: color-mix(in srgb, var(--adm-accent, var(--pico-primary)) 8%, transparent);
+}
+.admonition > :last-child { margin-bottom: 0; }
+.admonition-title {
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+  color: var(--adm-accent, var(--pico-primary));
+}
+.admonition.note     { --adm-accent: #2196f3; }
+.admonition.info     { --adm-accent: #00b8d4; }
+.admonition.tip,
+.admonition.success  { --adm-accent: #0a7a41; }
+.admonition.question { --adm-accent: #64c800; }
+.admonition.warning  { --adm-accent: #e08600; }
+.admonition.danger,
+.admonition.failure,
+.admonition.bug      { --adm-accent: #d32f2f; }
+.admonition.example  { --adm-accent: #7c4dff; }
+.admonition.quote    { --adm-accent: #9e9e9e; }
+
+/* Collapsible variant: hide the native marker, add our own rotating caret. */
+details.admonition > summary.admonition-title {
+  cursor: pointer;
+  list-style: none;
+}
+details.admonition > summary.admonition-title::-webkit-details-marker { display: none; }
+details.admonition > summary.admonition-title::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.4rem;
+  transition: transform 0.15s ease;
+}
+details.admonition[open] > summary.admonition-title::before { transform: rotate(90deg); }

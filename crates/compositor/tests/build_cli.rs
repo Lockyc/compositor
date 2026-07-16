@@ -180,3 +180,25 @@ fn build_works_on_bare_markdown_dir_without_docs_subdir() {
     );
     fs::remove_dir_all(&tmp).ok();
 }
+
+#[test]
+fn build_stylesheet_carries_admonition_rules() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-adm-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"Test\"\n").unwrap();
+    fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+    let css = fs::read_to_string(tmp.join("site/assets/compositor.css")).unwrap();
+    assert!(
+        css.contains(".admonition"),
+        "stylesheet missing admonition rules"
+    );
+    assert!(
+        css.contains(".admonition.warning"),
+        "stylesheet missing per-type accent"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
