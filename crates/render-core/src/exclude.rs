@@ -6,7 +6,7 @@ use std::path::Path;
 /// `superpowers-notes.md`. A trailing slash on a pattern is ignored.
 pub fn is_excluded(rel: &Path, patterns: &[String]) -> bool {
     patterns.iter().any(|p| {
-        let pat = p.trim().trim_end_matches('/');
+        let pat = p.trim().trim_start_matches("./").trim_end_matches('/');
         !pat.is_empty() && rel.starts_with(pat)
     })
 }
@@ -43,5 +43,11 @@ mod tests {
     fn unrelated_path_not_excluded() {
         let pats = vec!["superpowers/".to_string(), "inbox/".to_string()];
         assert!(!is_excluded(Path::new("guides/watch.md"), &pats));
+    }
+
+    #[test]
+    fn dot_slash_prefixed_pattern_still_excludes() {
+        let pats = vec!["./superpowers/".to_string()];
+        assert!(is_excluded(Path::new("superpowers/spec.md"), &pats));
     }
 }

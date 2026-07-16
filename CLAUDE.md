@@ -35,8 +35,10 @@ don't require the author to configure it.
 watching a terminal, so the tool must **degrade gracefully on content errors, never
 halt or swallow updates**. This splits the two commands' failure policy:
 
-- **`build`** — the one-shot path a human or CI watches — stays **strict**: an
-  unresolvable internal link is a hard error that fails the build loudly.
+- **`build`** — the one-shot path a human or CI watches — is **strict by
+  default**: an unresolvable internal link is a hard error that fails the
+  build loudly; `--lenient` opts out for unattended pipelines, rendering the
+  broken link as an honest 404 instead.
 - **`serve`** — the long-running unattended path — is
   **lenient**: it never halts on a content error. An unresolvable internal link
   still gets its `.md`→`.html` rewrite (surfacing as an honest 404), the rebuild

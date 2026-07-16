@@ -36,6 +36,15 @@ Not bugs that block use — conscious deferrals.
   output, which is what gets hosted. Wiring an in-memory index into `serve` is
   deferred.
 
+## `exclude`
+
+- **A link from a kept page into an excluded subtree is an unresolvable link.**
+  An excluded page is dropped from the known-URL set entirely, so a link to it
+  from a page that *is* rendered has nothing to resolve against — under a
+  **strict** `build` that's a hard error, same as any other broken link
+  (`--lenient` renders it as a 404 instead). By design, not a bug: during a
+  migration, either pass `--lenient` or remove the link.
+
 ## Admonitions
 
 - **A TOC link to a heading inside a collapsed `???` doesn't auto-expand it.**
