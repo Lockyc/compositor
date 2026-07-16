@@ -193,17 +193,48 @@
   font-weight: 600;
   color: var(--adm-accent, var(--pico-primary));
 }
-.admonition.note     { --adm-accent: #2196f3; }
-.admonition.info     { --adm-accent: #00b8d4; }
+/* The accent drives the left border, the background tint, AND the title text —
+   so its light-mode value must clear WCAG AA (4.5:1) on the light background and
+   its dark-mode value on the dark one (matching the AA discipline of the green
+   tokens above). Light mode uses darkened shades; dark mode brightens them.
+   Same light/dark/system-dark selector structure Pico's own tokens use. */
+.admonition.note     { --adm-accent: #1565c0; }
+.admonition.info     { --adm-accent: #006064; }
 .admonition.tip,
 .admonition.success  { --adm-accent: #0a7a41; }
-.admonition.question { --adm-accent: #64c800; }
-.admonition.warning  { --adm-accent: #e08600; }
+.admonition.question { --adm-accent: #33691e; }
+.admonition.warning  { --adm-accent: #8f4700; }
 .admonition.danger,
 .admonition.failure,
-.admonition.bug      { --adm-accent: #d32f2f; }
-.admonition.example  { --adm-accent: #7c4dff; }
-.admonition.quote    { --adm-accent: #9e9e9e; }
+.admonition.bug      { --adm-accent: #c62828; }
+.admonition.example  { --adm-accent: #5e35b1; }
+.admonition.quote    { --adm-accent: #616161; }
+
+:root[data-theme=dark] .admonition.note     { --adm-accent: #64b5f6; }
+:root[data-theme=dark] .admonition.info     { --adm-accent: #4dd0e1; }
+:root[data-theme=dark] .admonition.tip,
+:root[data-theme=dark] .admonition.success  { --adm-accent: #66bb6a; }
+:root[data-theme=dark] .admonition.question { --adm-accent: #9ccc65; }
+:root[data-theme=dark] .admonition.warning  { --adm-accent: #ffb74d; }
+:root[data-theme=dark] .admonition.danger,
+:root[data-theme=dark] .admonition.failure,
+:root[data-theme=dark] .admonition.bug      { --adm-accent: #ef9a9a; }
+:root[data-theme=dark] .admonition.example  { --adm-accent: #b39ddb; }
+:root[data-theme=dark] .admonition.quote    { --adm-accent: #bdbdbd; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) .admonition.note     { --adm-accent: #64b5f6; }
+  :root:not([data-theme=light]) .admonition.info     { --adm-accent: #4dd0e1; }
+  :root:not([data-theme=light]) .admonition.tip,
+  :root:not([data-theme=light]) .admonition.success  { --adm-accent: #66bb6a; }
+  :root:not([data-theme=light]) .admonition.question { --adm-accent: #9ccc65; }
+  :root:not([data-theme=light]) .admonition.warning  { --adm-accent: #ffb74d; }
+  :root:not([data-theme=light]) .admonition.danger,
+  :root:not([data-theme=light]) .admonition.failure,
+  :root:not([data-theme=light]) .admonition.bug      { --adm-accent: #ef9a9a; }
+  :root:not([data-theme=light]) .admonition.example  { --adm-accent: #b39ddb; }
+  :root:not([data-theme=light]) .admonition.quote    { --adm-accent: #bdbdbd; }
+}
 
 /* Collapsible variant: hide the native marker, add our own rotating caret. */
 details.admonition > summary.admonition-title {

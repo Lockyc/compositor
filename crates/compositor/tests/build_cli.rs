@@ -200,6 +200,12 @@ fn build_stylesheet_carries_admonition_rules() {
         css.contains(".admonition.warning"),
         "stylesheet missing per-type accent"
     );
+    // Per-theme accents (title text must clear WCAG AA on both backgrounds):
+    // a dark-mode override must be present, not one theme-fixed value.
+    assert!(
+        css.contains("[data-theme=dark] .admonition.note"),
+        "stylesheet missing dark-theme admonition accent override"
+    );
     fs::remove_dir_all(&tmp).ok();
 }
 

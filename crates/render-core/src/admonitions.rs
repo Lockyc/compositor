@@ -154,16 +154,22 @@ fn render_wrapper(op: &Opener, body: &str) -> String {
         Marker::DetailsOpen => ("details", "summary", "details", " open"),
     };
     let class_attr = html_escape(&format!("admonition {}", op.classes));
-    let title_html = match &op.title {
-        Some(t) if t.is_empty() => String::new(),
+    let is_collapsible = matches!(op.marker, Marker::DetailsClosed | Marker::DetailsOpen);
+    // Resolve the title text: None = render no title element at all. A collapsible
+    // must keep a <summary> click target, so an explicitly-empty title falls back
+    // to the default there (a summary-less <details> shows a browser-default label
+    // and makes the whole body the toggle). A static block may suppress its bar.
+    let title_text: Option<String> = match &op.title {
+        Some(t) if t.is_empty() => is_collapsible.then(|| default_title(&op.classes)),
+        Some(t) => Some(t.clone()),
+        None => Some(default_title(&op.classes)),
+    };
+    let title_html = match title_text {
         Some(t) => format!(
             "<{title_tag} class=\"admonition-title\">{}</{title_tag}>\n",
-            html_escape(t)
+            html_escape(&t)
         ),
-        None => format!(
-            "<{title_tag} class=\"admonition-title\">{}</{title_tag}>\n",
-            html_escape(&default_title(&op.classes))
-        ),
+        None => String::new(),
     };
     let mut s = String::new();
     s.push_str(&format!("<{open_tag} class=\"{class_attr}\"{open_attr}>\n"));
@@ -298,7 +304,8 @@ mod tests {
     fn collapsible_closed_default_title() {
         let out = preprocess_admonitions("??? note\n    Body text.\n");
         assert!(out.contains("<details class=\"admonition note\">"), "{out}");
-        assert!(!out.contains(" open"), "{out}");
+        // The closed variant must not carry the `open` attribute on its tag.
+        assert!(!out.contains("admonition note\" open>"), "{out}");
         assert!(
             out.contains("<summary class=\"admonition-title\">Note</summary>"),
             "{out}"
@@ -344,6 +351,20 @@ mod tests {
         assert!(
             out_open.contains("<summary class=\"admonition-title\">Pro tip</summary>"),
             "{out_open}"
+        );
+    }
+
+    #[test]
+    fn collapsible_empty_title_falls_back_to_default_summary() {
+        // A collapsible needs a clickable <summary>; an explicitly-empty title
+        // must not drop it (a summary-less <details> shows a browser-default
+        // label). The block variant still suppresses its title bar (see
+        // `empty_title_suppresses_title_element`).
+        let out = preprocess_admonitions("??? note \"\"\n    Body.\n");
+        assert!(out.contains("<details class=\"admonition note\">"), "{out}");
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
         );
     }
 }
