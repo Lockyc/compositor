@@ -269,7 +269,7 @@ fn spawn_watcher(
 }
 
 pub(crate) fn serve_loop(
-    server: Server,
+    server: &Server,
     state: Arc<RwLock<ServedSite>>,
     docs: PathBuf,
     exclude: Vec<String>,
@@ -302,7 +302,21 @@ fn bind_server(host: &str, port: Option<u16>) -> Result<Server> {
     })
 }
 
-pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) -> Result<()> {
+/// Everything a serve entry point needs, assembled but not yet blocking. Both `run_serve`
+/// (CLI, blocks) and `serve_handle` (host apps, returns) build from this — one setup path,
+/// so the two entry points cannot drift.
+struct Serving {
+    server: Server,
+    state: Arc<RwLock<ServedSite>>,
+    docs: PathBuf,
+    exclude: Vec<String>,
+    /// `None` = live-reload disabled. The caller must keep this alive; see `spawn_watcher`.
+    watcher: Option<(RecommendedWatcher, JoinHandle<()>)>,
+}
+
+/// Load the config, build the site, start the watcher, and bind the port — everything up to
+/// (but not including) the blocking request loop.
+fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
@@ -312,12 +326,11 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
         epoch: 0,
     }));
 
-    // Captured before `cfg` moves into `spawn_watcher` below — the on-demand
-    // asset branch in `handle` needs it too.
+    // Captured before `cfg` moves into `spawn_watcher` — the on-demand asset branch in
+    // `handle` needs it too.
     let exclude = cfg.exclude.clone();
 
-    // Held until `run_serve` returns: dropping it would silently disable live-reload.
-    let _watcher = spawn_watcher(
+    let watcher = spawn_watcher(
         Arc::clone(&state),
         cfg,
         docs.clone(),
@@ -325,12 +338,31 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     );
 
     let server = bind_server(host, port)?;
+    Ok(Serving {
+        server,
+        state,
+        docs,
+        exclude,
+        watcher,
+    })
+}
+
+pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) -> Result<()> {
+    let Serving {
+        server,
+        state,
+        docs,
+        exclude,
+        // Held until this function returns; dropping it would disable live-reload.
+        watcher: _watcher,
+    } = setup(project_dir, host, port)?;
+
     let listen = server.server_addr();
     println!("compositor serving {} on http://{listen}/", docs.display());
     if open {
         open_browser(&format!("http://{listen}/"));
     }
-    serve_loop(server, state, docs, exclude);
+    serve_loop(&server, state, docs, exclude);
     Ok(())
 }
 
@@ -426,11 +458,12 @@ mod tests {
 
     #[test]
     fn serves_page_and_reload_endpoint() {
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
         let state = sample_state();
         let docs = std::env::temp_dir();
-        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
 
         let page = get(addr, "/");
         assert!(page.contains("200 OK"), "page resp: {page}");
@@ -456,10 +489,11 @@ mod tests {
     #[test]
     fn serves_embedded_shell_css() {
         let state = sample_state();
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
         let docs = std::path::PathBuf::from(".");
-        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
         let css = get(addr, "/assets/compositor.css");
         assert!(css.contains(".topbar"));
     }
@@ -467,10 +501,11 @@ mod tests {
     #[test]
     fn serves_embedded_shell_js() {
         let state = sample_state();
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
         let docs = std::path::PathBuf::from(".");
-        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
         let js = get(addr, "/assets/compositor.js");
         assert!(js.contains("addEventListener"));
     }
@@ -492,11 +527,12 @@ mod tests {
         std::fs::write(tmp.join("guides/kept.txt"), "public").unwrap();
 
         let state = sample_state();
-        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
         let exclude = vec!["superpowers/".to_string()];
         let docs_for_thread = tmp.clone();
-        std::thread::spawn(move || serve_loop(server, state, docs_for_thread, exclude));
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread, exclude));
 
         let excluded = get(addr, "/superpowers/note.txt");
         assert!(
