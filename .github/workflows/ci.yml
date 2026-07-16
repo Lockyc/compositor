@@ -11,9 +11,11 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt, clippy
+      # No toolchain action: the runner's rustup reads rust-toolchain.toml and
+      # installs the pinned channel + components. Pinning the action to @stable
+      # would override the file and reintroduce the drift it exists to prevent.
+      - name: install the pinned toolchain (rust-toolchain.toml)
+        run: rustup show
 
       - name: fmt check
         run: cargo fmt --check

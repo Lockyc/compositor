@@ -13,9 +13,14 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
+      # No toolchain action: the runner's rustup reads rust-toolchain.toml, so the
+      # published binary is built by the same pinned compiler the gate tested with.
+      # The target is added here rather than in rust-toolchain.toml so a local
+      # checkout doesn't pull a Linux target it never builds.
+      - name: install the pinned toolchain (rust-toolchain.toml)
+        run: |
+          rustup show
+          rustup target add x86_64-unknown-linux-gnu
 
       - name: build release binary
         run: cargo build --release -p compositor --target x86_64-unknown-linux-gnu

@@ -167,3 +167,17 @@ moves.
   anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
 - Pre-merge gate: `just gate` (fmt-check + clippy + tests)
+
+## Toolchain
+
+`rust-toolchain.toml` is the single source of truth for the Rust version — `just
+gate` and both GitHub workflows resolve from it (rustup reads it automatically),
+so a green gate locally means a green CI. Bump it deliberately, fixing any new
+clippy lints in the same change.
+
+**Footgun: don't reintroduce a floating toolchain in CI.** A
+`dtolnay/rust-toolchain@stable` step overrides the file and silently restores the
+drift the pin exists to remove — a new stable lands a new clippy lint, CI goes red
+with no code change, and the local gate still passes on the older compiler. That
+cost a patch release once. The workflows install the pinned toolchain with `rustup
+show` for exactly this reason.
