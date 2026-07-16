@@ -14,6 +14,10 @@ enum Command {
     Build {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
+        /// Publish even when an internal link is unresolvable (render it as an
+        /// honest 404) instead of failing the build. For unattended pipelines.
+        #[arg(long)]
+        lenient: bool,
     },
     /// Serve the site with live-reload, rebuilding on change.
     Serve {
@@ -31,7 +35,14 @@ enum Command {
 
 fn main() -> anyhow::Result<()> {
     match Cli::parse().command {
-        Command::Build { dir } => compositor::build::run_build(&dir),
+        Command::Build { dir, lenient } => {
+            let policy = if lenient {
+                render_core::LinkPolicy::Lenient
+            } else {
+                render_core::LinkPolicy::Strict
+            };
+            compositor::build::run_build(&dir, policy)
+        }
         Command::Serve {
             dir,
             host,

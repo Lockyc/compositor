@@ -1,4 +1,5 @@
 use compositor::build::run_build;
+use render_core::LinkPolicy;
 use std::fs;
 
 #[test]
@@ -10,7 +11,7 @@ fn build_writes_html_files() {
     fs::write(tmp.join("docs/index.md"), "# Home\n\n[tar](cli/tar.md)").unwrap();
     fs::write(tmp.join("docs/cli/tar.md"), "# Tar\n\nbody").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
     assert!(index.contains("<title>Home · Test</title>"));
@@ -31,7 +32,7 @@ fn build_copies_non_markdown_assets_into_the_site() {
     fs::write(tmp.join("docs/img/logo.png"), b"\x89PNG fake bytes").unwrap();
     fs::write(tmp.join("docs/data.csv"), "a,b\n1,2\n").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     // The image is copied verbatim (bytes preserved) at its mirrored path.
     assert_eq!(
@@ -59,7 +60,7 @@ fn build_rejects_out_dir_that_would_delete_the_project() {
     .unwrap();
     fs::write(tmp.join("docs/index.md"), "# Home").unwrap();
 
-    let result = run_build(&tmp);
+    let result = run_build(&tmp, LinkPolicy::Strict);
 
     assert!(result.is_err(), "run_build must reject out_dir = \".\"");
     assert!(
@@ -78,7 +79,7 @@ fn build_works_without_compositor_toml_using_docs_subdir() {
     // folder, docs_dir = "docs" since that subdir exists).
     fs::write(tmp.join("docs/index.md"), "# Home\n\nbody").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
     // Page rendered; title is "<h1> · <derived site_name>".
@@ -95,7 +96,7 @@ fn build_synthesizes_a_home_when_no_index_md() {
     // No index.md / home.md / readme.md — only a content page.
     fs::write(tmp.join("docs/guide.md"), "# Guide\n\nbody").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     // A home page is generated at index.html; the shell carries the nav menu,
     // so the guide is reachable from `/` even with no landing file.
@@ -116,7 +117,7 @@ fn build_promotes_readme_to_the_home() {
     // A root README (uppercase) and no index.md.
     fs::write(tmp.join("docs/README.md"), "# Welcome\n\nstart here").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     // `/` serves the README content...
     let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
@@ -137,7 +138,7 @@ fn build_emits_linked_stylesheet_and_script() {
     fs::create_dir_all(&tmp).unwrap();
     fs::write(tmp.join("index.md"), "# Home\n\nhi").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     // Default out_dir (see SiteConfig::out_dir) is "site".
     let out = tmp.join("site");
@@ -167,7 +168,7 @@ fn build_works_on_bare_markdown_dir_without_docs_subdir() {
     fs::write(tmp.join("index.md"), "# Home").unwrap();
     fs::write(tmp.join("logo.png"), b"PNG").unwrap();
 
-    run_build(&tmp).unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
 
     // Output lands in <dir>/site; the asset is mirrored.
     assert!(tmp.join("site/index.html").exists());

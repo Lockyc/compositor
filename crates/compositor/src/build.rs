@@ -6,7 +6,7 @@ use render_core::LinkPolicy;
 use std::path::{Component, Path};
 use walkdir::WalkDir;
 
-pub fn run_build(project_dir: &Path) -> Result<()> {
+pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
     validate_out_dir(cfg.out_dir())?;
@@ -14,7 +14,7 @@ pub fn run_build(project_dir: &Path) -> Result<()> {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
-    let site = build_site(&docs, LinkPolicy::Strict)?;
+    let site = build_site(&docs, policy)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(&site, &cfg, project_dir);
@@ -123,5 +123,43 @@ fn run_pagefind(out: &Path) {
         Ok(s) if s.success() => {}
         Ok(s) => eprintln!("warning: pagefind exited with {s}"),
         Err(_) => eprintln!("warning: pagefind not found on PATH; search index skipped"),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use render_core::LinkPolicy;
+
+    fn scratch(tag: &str) -> std::path::PathBuf {
+        let p = std::env::temp_dir().join(format!("compositor-build-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&p);
+        std::fs::create_dir_all(p.join("docs")).unwrap();
+        p
+    }
+
+    #[test]
+    fn broken_link_fails_strict_but_survives_lenient() {
+        let tmp = scratch("policy");
+        // A page whose internal link resolves to nothing.
+        std::fs::write(tmp.join("docs/a.md"), "# A\n\n[dead](missing.md)\n").unwrap();
+
+        let strict = run_build(&tmp, LinkPolicy::Strict);
+        assert!(
+            strict.is_err(),
+            "strict build should reject the broken link"
+        );
+
+        let lenient = run_build(&tmp, LinkPolicy::Lenient);
+        assert!(
+            lenient.is_ok(),
+            "lenient build must publish anyway: {lenient:?}"
+        );
+        assert!(
+            tmp.join("site/a.html").exists(),
+            "lenient build wrote the page"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
