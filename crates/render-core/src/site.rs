@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
 use crate::frontmatter::split_frontmatter;
-use crate::markdown::{render_markdown, LinkPolicy, TocEntry};
+use crate::markdown::{first_h1, render_markdown, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
 use crate::wikilink::WikiIndex;
 
@@ -43,9 +43,12 @@ fn url_for(rel: &Path) -> String {
 }
 
 pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
-    // Pass 1: collect page metadata + known urls.
-    let mut raws = Vec::new(); // (rel, page_dir, stem, fm_title, body)
+    // Pass 1: collect metadata, known urls, and the wikilink index. Titles are
+    // resolved here (frontmatter -> first H1 -> humanized stem) so the index can
+    // carry each page's display title.
+    let mut raws = Vec::new(); // (rel, page_dir, url, title, body)
     let mut known_urls = std::collections::HashSet::new();
+    let mut wiki = WikiIndex::new();
     for entry in WalkDir::new(docs_dir).sort_by_file_name() {
         let entry = entry?;
         let path = entry.path();
@@ -61,23 +64,22 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
             .and_then(|s| s.to_str())
             .unwrap_or("page")
             .to_string();
-        known_urls.insert(url_for(&rel));
-        raws.push((rel, page_dir, stem, fm.title, body));
-    }
-    // Pass 2: render (links now resolvable).
-    // TODO(Task 4): populate a real WikiIndex from `raws` (titles/aliases/stems)
-    // in pass 1 and thread it through here; an empty index means every
-    // `[[wikilink]]` in the docs tree is currently unresolved.
-    let wiki = WikiIndex::new();
-    let mut pages = Vec::new();
-    for (rel, page_dir, stem, fm_title, body) in raws {
-        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy)?;
-        let title = fm_title
+        let url = url_for(&rel);
+        let title = fm
+            .title
             .clone()
-            .or_else(|| rendered.first_h1.clone())
+            .or_else(|| first_h1(&body))
             .unwrap_or_else(|| humanize_filename(&stem));
+        known_urls.insert(url.clone());
+        wiki.add_page(&url, &title, &rel, &stem, &fm.aliases);
+        raws.push((rel, page_dir, url, title, body));
+    }
+    // Pass 2: render (md links and wikilinks now resolvable).
+    let mut pages = Vec::new();
+    for (rel, page_dir, url, title, body) in raws {
+        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy)?;
         pages.push(Page {
-            url: url_for(&rel),
+            url,
             rel_path: rel,
             title,
             html: rendered.html,
@@ -86,4 +88,73 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy) -> Result<SiteModel> {
     }
     let nav = tree_from_pages(&pages);
     Ok(SiteModel { pages, nav })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::markdown::LinkPolicy;
+    use std::fs;
+
+    /// A fresh, empty temp dir unique to this test name + process, cleaned first.
+    fn scratch(name: &str) -> std::path::PathBuf {
+        let d = std::env::temp_dir().join(format!(
+            "compositor-wikilink-{}-{}",
+            std::process::id(),
+            name
+        ));
+        let _ = fs::remove_dir_all(&d);
+        fs::create_dir_all(&d).unwrap();
+        d
+    }
+
+    fn write(dir: &Path, rel: &str, body: &str) {
+        let p = dir.join(rel);
+        fs::create_dir_all(p.parent().unwrap()).unwrap();
+        fs::write(p, body).unwrap();
+    }
+
+    #[test]
+    fn build_resolves_wikilink_by_title_with_target_title_text() {
+        let d = scratch("by-title");
+        write(
+            &d,
+            "guide/getting-started.md",
+            "---\ntitle: Getting Started\n---\n# Getting Started\n",
+        );
+        write(&d, "index.md", "Welcome — see [[Getting Started]].\n");
+
+        let site = build_site(&d, LinkPolicy::Strict).unwrap();
+        let home = site.pages.iter().find(|p| p.url == "index.html").unwrap();
+        assert!(
+            home.html
+                .contains(r#"<a href="guide/getting-started.html">Getting Started</a>"#),
+            "got: {}",
+            home.html
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn build_errors_on_unresolvable_wikilink_under_strict() {
+        let d = scratch("strict-dangling");
+        write(&d, "index.md", "Dangling [[Nowhere]].\n");
+        let err = build_site(&d, LinkPolicy::Strict).err().unwrap();
+        assert!(err.to_string().contains("Nowhere"), "got: {err}");
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn build_serve_lenient_degrades_unresolvable_wikilink() {
+        let d = scratch("lenient-dangling");
+        write(&d, "index.md", "Dangling [[Nowhere]].\n");
+        let site = build_site(&d, LinkPolicy::Lenient).unwrap();
+        let home = &site.pages[0];
+        assert!(
+            home.html.contains(r#"data-wikilink="true""#),
+            "got: {}",
+            home.html
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
 }
