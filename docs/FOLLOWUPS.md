@@ -45,7 +45,7 @@ Not bugs that block use — conscious deferrals.
 - **No embeds / transclusion.** `![[Name]]` is not supported — comrak's wikilink
   extension does not fire on the `!`-prefixed form (the `!` is consumed by the
   image-opening logic first), so it passes through as inert literal text
-  (`![[Name]]`), never resolving as a link or image. Deferred; add if an the docs KB
+  (`![[Name]]`), never resolving as a link or image. Deferred; add if a consuming KB
   needs inline embeds.
 - **Anchors are not validated.** `[[Name#section]]` appends `#section` to the href
   without checking the target page actually has that heading id — consistent with the

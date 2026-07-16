@@ -2,7 +2,7 @@
 
 A Rust static-site generator for Markdown doc repos: point it at a directory of
 Markdown and get a themed, navigable, search-indexed static site. Built as a
-from-scratch replacement for MkDocs across the the docs documentation sites, and as a
+from-scratch replacement for MkDocs across a fleet of documentation sites, and as a
 reusable render engine (`render-core`) that a future desktop viewer can embed.
 
 [![CI](https://github.com/Lockyc/compositor/actions/workflows/ci.yml/badge.svg)](https://github.com/Lockyc/compositor/actions/workflows/ci.yml)

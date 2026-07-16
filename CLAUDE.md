@@ -2,8 +2,8 @@
 
 ## Purpose
 
-A Rust static-site generator for Markdown doc repos, replacing MkDocs across the
-the docs sites. `compositor build <dir>` renders a directory of Markdown into a themed,
+A Rust static-site generator for Markdown doc repos, replacing MkDocs across a
+set of documentation sites. `compositor build <dir>` renders a directory of Markdown into a themed,
 tree-navigated, Pagefind-indexed static HTML site.
 
 **compositor owns the entire shell; Markdown is purely content.** The page chrome,
