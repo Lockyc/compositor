@@ -63,7 +63,9 @@ runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
 Milestone 3 (`[[wikilinks]]` + frontmatter-driven KB titles) is **complete**:
 `[[Name]]` resolves a page by name against a tree-wide index — frontmatter title,
 filename stem (and its humanized form), `aliases`, or a path-qualified `[[dir/Name]]`
-— with the frontmatter title driving both link identity and the rendered link text.
+— with the page's resolved title (frontmatter `title` → first `# H1` → humanized
+filename — the same chain as the "Title resolution:" bullet below) driving both
+link identity and the rendered link text.
 Matching is case-insensitive. `[[Name|label]]` overrides the text and `[[Name#anchor]]`
 deep-links. Resolution honors the strict/lenient split: `build` hard-errors on an
 unresolvable or ambiguous wikilink; `serve` picks the sorted-first candidate for an

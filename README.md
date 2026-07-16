@@ -23,7 +23,8 @@ toggle), a left tree-nav with active-page highlighting, and a server-side
 per-page TOC with scroll-spy. Search is live in `build` output; it's unavailable
 under `serve` (which renders in memory and never runs Pagefind).
 `[[wikilinks]]` (resolve pages by title, filename, alias, or path, with the
-frontmatter title as link text) have also landed. Not yet built: `!!!` admonitions.
+page's resolved title — frontmatter `title` → first `# H1` → humanized filename —
+as link text) have also landed. Not yet built: `!!!` admonitions.
 See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
 
 ## Build & use
