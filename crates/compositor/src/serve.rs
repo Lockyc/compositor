@@ -47,19 +47,23 @@ fn inject_reload(html: &str, epoch: u64) -> String {
 /// the epoch `/__reload` will report for this build (see `rebuild_into`).
 pub(crate) fn build_pages(
     cfg: &SiteConfig,
-    site: &SiteModel,
+    site: &mut SiteModel,
     project_dir: &Path,
     epoch: u64,
 ) -> HashMap<String, String> {
+    // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
+    crate::render_page::surface_repo_claude(site, cfg, project_dir);
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(site, cfg, project_dir);
+    let order = crate::render_page::reading_order(&site.nav, home.as_ref());
     site.pages
         .iter()
         .chain(home.as_ref())
         .map(|p| {
+            let (prev, next) = crate::render_page::neighbours(&order, &p.url);
             (
                 p.url.clone(),
-                inject_reload(&render_page(cfg, &site.nav, p), epoch),
+                inject_reload(&render_page(cfg, &site.nav, p, prev, next), epoch),
             )
         })
         .collect()
@@ -199,9 +203,9 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path, exclude: &[Stri
 /// assignments so a panic during rendering can't poison the lock.
 fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, project_dir: &Path) {
     match build_site(docs, LinkPolicy::Lenient, &cfg.exclude) {
-        Ok(site) => {
+        Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
-            let pages = build_pages(cfg, &site, project_dir, next_epoch);
+            let pages = build_pages(cfg, &mut site, project_dir, next_epoch);
             let mut s = state.write().expect("state lock");
             s.pages = pages;
             s.epoch = next_epoch;
@@ -292,9 +296,9 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
-    let site = build_site(&docs, LinkPolicy::Lenient, &cfg.exclude)?;
+    let mut site = build_site(&docs, LinkPolicy::Lenient, &cfg.exclude)?;
     let state = Arc::new(RwLock::new(ServedSite {
-        pages: build_pages(&cfg, &site, project_dir, 0),
+        pages: build_pages(&cfg, &mut site, project_dir, 0),
         epoch: 0,
     }));
 
@@ -509,9 +513,9 @@ mod tests {
             docs_dir: Some("docs".to_string()),
             ..Default::default()
         };
-        let site = build_site(&docs, LinkPolicy::Lenient, &[]).unwrap();
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &[]).unwrap();
         let state = RwLock::new(ServedSite {
-            pages: build_pages(&cfg, &site, &tmp, 0),
+            pages: build_pages(&cfg, &mut site, &tmp, 0),
             epoch: 0,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));

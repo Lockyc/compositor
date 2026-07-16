@@ -2,7 +2,7 @@ use crate::config::SiteConfig;
 use askama::Template;
 use render_core::frontmatter::split_frontmatter;
 use render_core::markdown::{render_markdown, TocEntry};
-use render_core::nav::{NavNode, NavTree};
+use render_core::nav::{flatten, NavLink, NavNode, NavTree};
 use render_core::site::{Page, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashSet;
@@ -19,9 +19,53 @@ struct PageTemplate<'a> {
     toc_html: String,
     has_toc: bool,
     body: &'a str,
+    has_prev: bool,
+    prev_href: String,
+    prev_title: &'a str,
+    has_next: bool,
+    next_href: String,
+    next_title: &'a str,
 }
 
-pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
+/// Linear reading order for prev/next, single-sourced from the nav tree. The
+/// landing page leads: a docs-root `index.md` is already the tree's first page,
+/// but a *synthetic* home (repo README / generated index — see `resolve_home`)
+/// isn't in the nav, so it's prepended here so `index.html` is always first.
+pub fn reading_order(nav: &NavTree, home: Option<&Page>) -> Vec<NavLink> {
+    let mut order = flatten(nav);
+    if !order.iter().any(|l| l.url == "index.html") {
+        if let Some(h) = home {
+            order.insert(
+                0,
+                NavLink {
+                    title: h.title.clone(),
+                    url: "index.html".to_string(),
+                },
+            );
+        }
+    }
+    order
+}
+
+/// The page before and after `url` in reading order (each `None` at an end, or
+/// when the page isn't in the order — e.g. nothing to page through).
+pub fn neighbours<'a>(
+    order: &'a [NavLink],
+    url: &str,
+) -> (Option<&'a NavLink>, Option<&'a NavLink>) {
+    match order.iter().position(|l| l.url == url) {
+        Some(i) => (i.checked_sub(1).map(|j| &order[j]), order.get(i + 1)),
+        None => (None, None),
+    }
+}
+
+pub fn render_page(
+    cfg: &SiteConfig,
+    nav: &NavTree,
+    page: &Page,
+    prev: Option<&NavLink>,
+    next: Option<&NavLink>,
+) -> String {
     // Nav links are emitted site-root-relative (e.g. "cli/tar.html"), but the
     // page being rendered may live in a subdirectory, so the links must be
     // made relative to *this* page's location: one "../" per directory of
@@ -43,6 +87,16 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
         toc_html,
         has_toc,
         body: &page.html,
+        has_prev: prev.is_some(),
+        prev_href: prev
+            .map(|l| format!("{prefix}{}", l.url))
+            .unwrap_or_default(),
+        prev_title: prev.map(|l| l.title.as_str()).unwrap_or_default(),
+        has_next: next.is_some(),
+        next_href: next
+            .map(|l| format!("{prefix}{}", l.url))
+            .unwrap_or_default(),
+        next_title: next.map(|l| l.title.as_str()).unwrap_or_default(),
     }
     .render()
     .expect("template render is infallible")
@@ -147,7 +201,7 @@ pub fn resolve_home(site: &SiteModel, cfg: &SiteConfig, project_dir: &Path) -> O
 /// Render the repo-root `README.md` (filename matched case-insensitively) into a
 /// home page, or `None` if there is no README to read/render.
 fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
-    let path = find_repo_readme(project_dir)?;
+    let path = find_repo_root_md(project_dir, "readme")?;
     let raw = std::fs::read_to_string(&path).ok()?;
     let (fm, body) = split_frontmatter(&raw);
     // Empty known-urls + lenient: the README is not part of the strict docs link
@@ -173,8 +227,10 @@ fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
     })
 }
 
-/// A top-level `*.md` file in `dir` whose stem is `readme` (case-insensitive).
-fn find_repo_readme(dir: &Path) -> Option<PathBuf> {
+/// A top-level `*.md` file in `dir` whose stem equals `stem` (case-insensitive) —
+/// the one discovery function for the repo-root files compositor surfaces from
+/// outside the docs tree (`README.md` → home, `CLAUDE.md` → nav entry).
+fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -184,8 +240,71 @@ fn find_repo_readme(dir: &Path) -> Option<PathBuf> {
                 && p.extension().and_then(|e| e.to_str()) == Some("md")
                 && p.file_stem()
                     .and_then(|s| s.to_str())
-                    .is_some_and(|s| s.eq_ignore_ascii_case("readme"))
+                    .is_some_and(|s| s.eq_ignore_ascii_case(stem))
         })
+}
+
+/// Surface a **repo-root `CLAUDE.md`** as a top-level nav page (label `CLAUDE`),
+/// adjacent to Home. The sibling of the repo-root README handling (`resolve_home`
+/// tier 3), but as a *nav entry* rather than the home page. Like the README it lives
+/// outside the docs link contract, so it renders leniently against an empty url/wiki
+/// base — its cross-tree links get the `.md`→`.html` rewrite and degrade to honest
+/// 404s rather than hard-failing a strict `build`.
+///
+/// A no-op unless the docs dir is a *subdir* (when it *is* the repo root, a `CLAUDE.md`
+/// there is already an ordinary docs page in the nav), there is a repo-root `CLAUDE.md`
+/// to read, and no page already occupies `CLAUDE.html` (a docs-tree `CLAUDE.md` is
+/// already surfaced — don't double-add).
+///
+/// The label is the fixed stem `CLAUDE`, never content-derived: these files
+/// conventionally open with a `# <projectname>` H1, which the normal title chain
+/// would wrongly surface as the menu label.
+pub fn surface_repo_claude(site: &mut SiteModel, cfg: &SiteConfig, project_dir: &Path) {
+    const URL: &str = "CLAUDE.html";
+    // Docs dir *is* the repo root → a root CLAUDE.md is already a docs page.
+    if cfg.docs_path(project_dir) == project_dir {
+        return;
+    }
+    // Already surfaced (e.g. a docs-tree CLAUDE.md) → no duplicate entry.
+    if site.pages.iter().any(|p| p.url == URL) {
+        return;
+    }
+    let Some(path) = find_repo_root_md(project_dir, "claude") else {
+        return;
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return;
+    };
+    let (_fm, body) = split_frontmatter(&raw);
+    let Ok(rendered) = render_markdown(
+        &body,
+        Path::new(""),
+        &HashSet::new(),
+        &render_core::wikilink::WikiIndex::new(),
+        LinkPolicy::Lenient,
+    ) else {
+        return;
+    };
+    site.pages.push(Page {
+        url: URL.to_string(),
+        rel_path: PathBuf::from("CLAUDE.md"),
+        title: "CLAUDE".to_string(),
+        html: rendered.html,
+        toc: rendered.toc,
+    });
+    // Sit adjacent to Home: after a leading `index.html` page if the nav has one,
+    // else first (the synthetic Home is rendered ahead of the nav list separately).
+    let pos = usize::from(matches!(
+        site.nav.0.first(),
+        Some(NavNode::Page { url, .. }) if url.as_str() == "index.html"
+    ));
+    site.nav.0.insert(
+        pos,
+        NavNode::Page {
+            title: "CLAUDE".to_string(),
+            url: URL.to_string(),
+        },
+    );
 }
 
 /// A generated landing page for a docs tree with no authored home: the site name
@@ -408,6 +527,109 @@ mod tests {
     }
 
     #[test]
+    fn repo_root_claude_md_surfaced_as_nav_page_when_docs_is_a_subdir() {
+        let tmp = scratch("repo-claude");
+        // Opens with an H1 that is the project name — the label must NOT derive
+        // from it, or the menu would read "compositor" instead of "CLAUDE".
+        std::fs::write(tmp.join("CLAUDE.md"), "# compositor\n\nagent notes").unwrap();
+        let mut s = site(vec![page("guide.md", "guide.html", "g")]);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+
+        let p = s
+            .pages
+            .iter()
+            .find(|p| p.url == "CLAUDE.html")
+            .expect("CLAUDE page added");
+        assert_eq!(p.title, "CLAUDE", "label is the fixed stem, not the H1");
+        assert!(p.html.contains("agent notes"), "body rendered: {}", p.html);
+
+        assert!(
+            s.nav.0.iter().any(|n| matches!(
+                n,
+                NavNode::Page { url, title } if url == "CLAUDE.html" && title == "CLAUDE"
+            )),
+            "nav gained a CLAUDE entry"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_claude_found_case_insensitively() {
+        let tmp = scratch("repo-claude-case");
+        std::fs::write(tmp.join("claude.md"), "lower body").unwrap();
+        let mut s = site(vec![page("guide.md", "guide.html", "g")]);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        assert!(s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn no_claude_surfaced_when_absent() {
+        let tmp = scratch("repo-no-claude");
+        let mut s = site(vec![page("guide.md", "guide.html", "g")]);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        assert!(s.nav.0.is_empty());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn docs_tree_claude_is_not_double_added() {
+        // A CLAUDE.md already inside the docs tree is already a page/nav entry;
+        // the repo-root pass must not add a second CLAUDE.html.
+        let tmp = scratch("repo-claude-dup");
+        std::fs::write(tmp.join("CLAUDE.md"), "repo root claude").unwrap();
+        let mut s = site(vec![page("CLAUDE.md", "CLAUDE.html", "docs-tree claude")]);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        let claude: Vec<_> = s.pages.iter().filter(|p| p.url == "CLAUDE.html").collect();
+        assert_eq!(claude.len(), 1, "no duplicate CLAUDE.html");
+        assert_eq!(claude[0].html, "docs-tree claude", "docs-tree page kept");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn claude_nav_entry_sits_after_a_leading_index_page() {
+        let tmp = scratch("repo-claude-order");
+        std::fs::write(tmp.join("CLAUDE.md"), "notes").unwrap();
+        let mut s = site(vec![page("guide.md", "guide.html", "g")]);
+        // Nav leads with a real index page (as a docs-root index.md would).
+        s.nav.0.insert(
+            0,
+            NavNode::Page {
+                title: "Welcome".into(),
+                url: "index.html".into(),
+            },
+        );
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        // Order: index.html, then CLAUDE.html.
+        match (&s.nav.0[0], &s.nav.0[1]) {
+            (NavNode::Page { url: u0, .. }, NavNode::Page { url: u1, .. }) => {
+                assert_eq!(u0, "index.html");
+                assert_eq!(u1, "CLAUDE.html");
+            }
+            _ => panic!("unexpected nav shape: {} nodes", s.nav.0.len()),
+        }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn claude_not_surfaced_when_docs_is_the_repo_root() {
+        // When docs_dir is ".", a repo-root CLAUDE.md is already a docs page; the
+        // repo-root pass must not add it again.
+        let tmp = scratch("repo-claude-flat");
+        std::fs::write(tmp.join("CLAUDE.md"), "notes").unwrap();
+        let cfg = SiteConfig {
+            site_name: "S".to_string(),
+            docs_dir: Some(".".to_string()),
+            ..SiteConfig::default()
+        };
+        let mut s = site(vec![page("guide.md", "guide.html", "g")]);
+        surface_repo_claude(&mut s, &cfg, &tmp);
+        assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn menu_includes_home_link_when_no_index_page() {
         // A synthetic home (repo README / generated index) is not a nav page, so
         // the menu gains an explicit "Home" entry linking back to `/`.
@@ -416,7 +638,13 @@ mod tests {
             title: "Guide".into(),
             url: "guide.html".into(),
         }]);
-        let out = render_page(&cfg, &nav, &page("guide.md", "guide.html", "<p>x</p>"));
+        let out = render_page(
+            &cfg,
+            &nav,
+            &page("guide.md", "guide.html", "<p>x</p>"),
+            None,
+            None,
+        );
         assert!(
             out.contains(r#"<li><a href="index.html">Home</a></li>"#),
             "{out}"
@@ -430,7 +658,13 @@ mod tests {
             title: "Guide".into(),
             url: "guide.html".into(),
         }]);
-        let out = render_page(&cfg, &nav, &page("index.md", "index.html", "<p>home</p>"));
+        let out = render_page(
+            &cfg,
+            &nav,
+            &page("index.md", "index.html", "<p>home</p>"),
+            None,
+            None,
+        );
         assert!(
             out.contains(r#"<li><a href="index.html" aria-current="page">Home</a></li>"#),
             "{out}"
@@ -452,7 +686,13 @@ mod tests {
                 url: "guide.html".into(),
             },
         ]);
-        let out = render_page(&cfg, &nav, &page("guide.md", "guide.html", "<p>x</p>"));
+        let out = render_page(
+            &cfg,
+            &nav,
+            &page("guide.md", "guide.html", "<p>x</p>"),
+            None,
+            None,
+        );
         assert!(!out.contains(">Home</a>"), "{out}");
         assert!(out.contains(">Welcome</a>"));
     }
@@ -479,7 +719,7 @@ mod tests {
             text: "Alpha".into(),
         }];
         let p = page_with_toc("guide.html", "<h2 id=\"alpha\">Alpha</h2>", toc);
-        let out = render_page(&cfg, &NavTree(vec![]), &p);
+        let out = render_page(&cfg, &NavTree(vec![]), &p, None, None);
         assert!(out.contains("class=\"topbar\""));
         assert!(out.contains("theme-toggle"));
         assert!(out.contains("id=\"toc\""));
@@ -494,7 +734,7 @@ mod tests {
             ..SiteConfig::default()
         };
         let p = page_with_toc("guide.html", "<p>flat</p>", vec![]);
-        let out = render_page(&cfg, &NavTree(vec![]), &p);
+        let out = render_page(&cfg, &NavTree(vec![]), &p, None, None);
         assert!(!out.contains("id=\"toc\""));
         assert!(!out.contains("has-toc"));
     }
@@ -552,5 +792,118 @@ mod tests {
             html,
             "<ul><li><a href=\"#sub\">Sub</a></li><li><a href=\"#top\">Top</a></li></ul>"
         );
+    }
+
+    fn link(title: &str, url: &str) -> NavLink {
+        NavLink {
+            title: title.into(),
+            url: url.into(),
+        }
+    }
+
+    #[test]
+    fn page_nav_renders_prev_and_next_with_depth_relative_hrefs() {
+        let cfg = SiteConfig {
+            site_name: "S".into(),
+            ..SiteConfig::default()
+        };
+        let prev = link("Alpha", "topics/alpha.html");
+        let next = link("Gamma", "topics/gamma.html");
+        // A page one directory deep: hrefs must be rewritten relative to it.
+        let p = page("topics/beta.md", "topics/beta.html", "<p>b</p>");
+        let out = render_page(&cfg, &NavTree(vec![]), &p, Some(&prev), Some(&next));
+        assert!(out.contains("class=\"page-nav\""), "{out}");
+        assert!(out.contains(r#"href="../topics/alpha.html""#), "{out}");
+        assert!(out.contains(">Alpha</span>"), "{out}");
+        assert!(out.contains(r#"href="../topics/gamma.html""#), "{out}");
+        assert!(out.contains(">Gamma</span>"), "{out}");
+        assert!(out.contains("← Previous"));
+        assert!(out.contains("Next →"));
+    }
+
+    #[test]
+    fn page_nav_omitted_when_no_neighbours() {
+        let cfg = SiteConfig {
+            site_name: "S".into(),
+            ..SiteConfig::default()
+        };
+        let out = render_page(
+            &cfg,
+            &NavTree(vec![]),
+            &page("only.md", "only.html", "<p>x</p>"),
+            None,
+            None,
+        );
+        assert!(!out.contains("class=\"page-nav\""), "{out}");
+    }
+
+    #[test]
+    fn footer_attribution_is_present() {
+        let cfg = SiteConfig {
+            site_name: "S".into(),
+            ..SiteConfig::default()
+        };
+        let out = render_page(
+            &cfg,
+            &NavTree(vec![]),
+            &page("a.md", "a.html", "<p>x</p>"),
+            None,
+            None,
+        );
+        assert!(out.contains("class=\"site-footer\""), "{out}");
+        assert!(out.contains("Built with"), "{out}");
+    }
+
+    #[test]
+    fn reading_order_prepends_synthetic_home() {
+        // Nav has no index.html (synthetic home from resolve_home). The home
+        // page is prepended so index.html leads the reading order.
+        let nav = NavTree(vec![NavNode::Page {
+            title: "Guide".into(),
+            url: "guide.html".into(),
+        }]);
+        let home = page("index.md", "index.html", "home");
+        let order = reading_order(&nav, Some(&home));
+        let urls: Vec<&str> = order.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["index.html", "guide.html"]);
+    }
+
+    #[test]
+    fn reading_order_keeps_real_index_first_without_duplicating() {
+        // A docs-root index.md is already index.html in the nav; it must not be
+        // duplicated by the synthetic-home prepend.
+        let nav = NavTree(vec![
+            NavNode::Page {
+                title: "Welcome".into(),
+                url: "index.html".into(),
+            },
+            NavNode::Page {
+                title: "Guide".into(),
+                url: "guide.html".into(),
+            },
+        ]);
+        let order = reading_order(&nav, None);
+        let urls: Vec<&str> = order.iter().map(|l| l.url.as_str()).collect();
+        assert_eq!(urls, ["index.html", "guide.html"]);
+    }
+
+    #[test]
+    fn neighbours_reports_ends_and_middle() {
+        let order = vec![
+            link("H", "index.html"),
+            link("A", "a.html"),
+            link("B", "b.html"),
+        ];
+        let (p, n) = neighbours(&order, "index.html");
+        assert!(p.is_none());
+        assert_eq!(n.unwrap().url, "a.html");
+        let (p, n) = neighbours(&order, "a.html");
+        assert_eq!(p.unwrap().url, "index.html");
+        assert_eq!(n.unwrap().url, "b.html");
+        let (p, n) = neighbours(&order, "b.html");
+        assert_eq!(p.unwrap().url, "a.html");
+        assert!(n.is_none());
+        let (p, n) = neighbours(&order, "missing.html");
+        assert!(p.is_none() && n.is_none());
     }
 }

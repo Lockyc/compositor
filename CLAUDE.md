@@ -25,6 +25,12 @@ no `compositor.toml` and no special files to work:
   `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);
   else a **generated index** — the site name over the nav as a link list. Never a blank
   body. (See `render_page::resolve_home`.)
+- **Repo-root `CLAUDE.md`** → surfaced as a top-level nav entry (label `CLAUDE`,
+  never content-derived), adjacent to Home. The nav-menu sibling of the README→home
+  promotion: same repo-root discovery (`find_repo_root_md`) and lenient
+  outside-the-docs-contract rendering, but a nav page rather than the landing. Only
+  when the docs dir is a subdir (a docs-tree `CLAUDE.md` is already a normal page).
+  (See `render_page::surface_repo_claude`.)
 - **A broken internal link** → degrades to a 404 under `serve`, never a halt (below).
 
 The Markdown author writes content; compositor supplies everything around it. When a
@@ -63,9 +69,12 @@ limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.m
 The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
 (brand, Pagefind search box, light/dark toggle that persists across reload), a left
 tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
-(h2/h3) with scroll-spy. The search box is populated by the Pagefind index built
-during `build`; it is unavailable under `serve` (which renders in memory and never
-runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
+(h2/h3) with scroll-spy. Each page also carries a **prev/next pager** at the foot of
+the content column (accent-outline buttons over the reading order — the flattened nav
+with the landing page first; see `render_page::reading_order`) and a site **footer**
+(a "Built with compositor" attribution). The search box is populated by the Pagefind
+index built during `build`; it is unavailable under `serve` (which renders in memory
+and never runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
 
 Milestone 2 (admonitions) is also **complete**: MkDocs/Material `!!!` callouts and
 `???`/`???+` collapsibles, with an arbitrary type word as the CSS class (known types

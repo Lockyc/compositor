@@ -14,6 +14,35 @@ pub enum NavNode {
 
 pub struct NavTree(pub Vec<NavNode>);
 
+/// One page in linear reading order — the flattened nav, used to derive
+/// prev/next page links.
+pub struct NavLink {
+    pub title: String,
+    pub url: String,
+}
+
+/// Flatten the nav tree into linear reading order: pages in the order they
+/// appear (index first, then alphabetical), descending into each section in
+/// place — the exact order the sidebar menu renders. Sections themselves are
+/// not links, only their pages are.
+pub fn flatten(nav: &NavTree) -> Vec<NavLink> {
+    let mut out = Vec::new();
+    collect(&nav.0, &mut out);
+    out
+}
+
+fn collect(nodes: &[NavNode], out: &mut Vec<NavLink>) {
+    for node in nodes {
+        match node {
+            NavNode::Page { title, url } => out.push(NavLink {
+                title: title.clone(),
+                url: url.clone(),
+            }),
+            NavNode::Section { children, .. } => collect(children, out),
+        }
+    }
+}
+
 // Intermediate mutable tree keyed by path component.
 #[derive(Default)]
 struct Dir {
@@ -70,4 +99,46 @@ fn render_dir(dir: &mut Dir) -> Vec<NavNode> {
         });
     }
     out
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn flatten_walks_reading_order_pages_then_sections() {
+        let nav = NavTree(vec![
+            NavNode::Page {
+                title: "Home".into(),
+                url: "index.html".into(),
+            },
+            NavNode::Page {
+                title: "Guide".into(),
+                url: "guide.html".into(),
+            },
+            NavNode::Section {
+                title: "Topics".into(),
+                children: vec![
+                    NavNode::Page {
+                        title: "Alpha".into(),
+                        url: "topics/alpha.html".into(),
+                    },
+                    NavNode::Page {
+                        title: "Beta".into(),
+                        url: "topics/beta.html".into(),
+                    },
+                ],
+            },
+        ]);
+        let urls: Vec<String> = flatten(&nav).into_iter().map(|l| l.url).collect();
+        assert_eq!(
+            urls,
+            [
+                "index.html",
+                "guide.html",
+                "topics/alpha.html",
+                "topics/beta.html"
+            ]
+        );
+    }
 }

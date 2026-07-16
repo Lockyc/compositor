@@ -20,9 +20,14 @@
   </header>
   <main class="layout{% if has_toc %} has-toc{% endif %}">
     <aside id="nav" data-pagefind-ignore>{{ nav_html|safe }}</aside>
-    <article id="doc" role="document" data-pagefind-body>{{ body|safe }}</article>
+    <article id="doc" role="document" data-pagefind-body>{{ body|safe }}
+      {% if has_prev || has_next %}<nav class="page-nav" data-pagefind-ignore aria-label="Previous and next page">
+        {% if has_prev %}<a class="page-nav-link page-nav-prev" href="{{ prev_href }}"><span class="page-nav-dir">← Previous</span><span class="page-nav-title">{{ prev_title }}</span></a>{% else %}<span></span>{% endif %}
+        {% if has_next %}<a class="page-nav-link page-nav-next" href="{{ next_href }}"><span class="page-nav-dir">Next →</span><span class="page-nav-title">{{ next_title }}</span></a>{% endif %}
+      </nav>{% endif %}</article>
     {% if has_toc %}<aside id="toc" data-pagefind-ignore><p class="toc-title">On this page</p>{{ toc_html|safe }}</aside>{% endif %}
   </main>
+  <footer class="site-footer">Built with <a href="https://github.com/lockyc/compositor" rel="noopener">compositor</a></footer>
   <script src="{{ asset_prefix }}pagefind/pagefind-ui.js"></script>
   <script src="{{ asset_prefix }}assets/compositor.js" defer></script>
 </body>

@@ -14,12 +14,16 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
-    let site = build_site(&docs, policy, &cfg.exclude)?;
+    let mut site = build_site(&docs, policy, &cfg.exclude)?;
+    // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
+    crate::render_page::surface_repo_claude(&mut site, &cfg, project_dir);
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(&site, &cfg, project_dir);
+    let order = crate::render_page::reading_order(&site.nav, home.as_ref());
     for page in site.pages.iter().chain(home.as_ref()) {
-        let html = render_page(&cfg, &site.nav, page);
+        let (prev, next) = crate::render_page::neighbours(&order, &page.url);
+        let html = render_page(&cfg, &site.nav, page, prev, next);
         let dest = out.join(&page.url);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;

@@ -21,7 +21,7 @@ fn page_html_has_title_body_and_nav() {
         html: "<p>hello</p>".into(),
         toc: vec![],
     };
-    let out = render_page(&cfg, &nav, &page);
+    let out = render_page(&cfg, &nav, &page, None, None);
     assert!(out.contains("<title>Home · Cheatsheet</title>"));
     assert!(out.contains("<p>hello</p>"));
     assert!(out.contains("href=\"index.html\""));
@@ -45,7 +45,7 @@ fn nav_url_and_title_are_escaped_for_html_attribute_context() {
         html: "<p>hello</p>".into(),
         toc: vec![],
     };
-    let out = render_page(&cfg, &nav, &page);
+    let out = render_page(&cfg, &nav, &page, None, None);
 
     // The raw quote must not be allowed to break out of the href attribute.
     assert!(!out.contains("href=\"a\".x.html\""));
@@ -76,7 +76,7 @@ fn nav_links_are_page_relative_for_nested_pages() {
         html: "<p>hello</p>".into(),
         toc: vec![],
     };
-    let out = render_page(&cfg, &nav, &page);
+    let out = render_page(&cfg, &nav, &page, None, None);
     assert!(out.contains("href=\"../index.html\""));
     assert!(!out.contains("href=\"index.html\""));
 }

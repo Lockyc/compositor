@@ -175,6 +175,46 @@
 #toc a:hover { color: var(--pico-primary); }
 #toc a[aria-current="true"] { color: var(--pico-primary); font-weight: 600; }
 
+/* --- Prev/next page navigation: a row at the foot of the doc column. Prev sits
+   left, next right; either can be absent (an empty <span> holds prev's slot so
+   next stays right-aligned). Each is an accent-outline box matching the topbar
+   buttons. */
+.page-nav {
+  display: flex;
+  justify-content: space-between;
+  gap: 1rem;
+  margin-top: 3rem;
+  padding-top: 1.5rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+}
+.page-nav-link {
+  display: flex;
+  flex-direction: column;
+  gap: 0.15rem;
+  max-width: 48%;
+  padding: 0.5rem 0.9rem;
+  border: 1px solid var(--pico-primary);
+  border-radius: var(--pico-border-radius);
+  text-decoration: none;
+  color: var(--pico-primary);
+}
+.page-nav-next { text-align: right; margin-left: auto; }
+.page-nav-link:hover { background: var(--pico-primary); color: var(--pico-primary-inverse); }
+.page-nav-dir { font-size: 0.75rem; text-transform: uppercase; letter-spacing: 0.03em; opacity: 0.85; }
+.page-nav-title { font-weight: 600; }
+
+/* --- Site footer: full-width attribution below the content column. */
+.site-footer {
+  max-width: 84rem;
+  margin: 2rem auto 0;
+  padding: 1.5rem;
+  border-top: 1px solid var(--pico-muted-border-color);
+  color: var(--pico-muted-color);
+  font-size: 0.85rem;
+  text-align: center;
+}
+.site-footer a { color: var(--pico-primary); }
+
 /* --- Responsive: collapse to single column; nav becomes an off-canvas drawer. */
 @media (max-width: 1024px) {
   .layout, .layout.has-toc {
