@@ -87,9 +87,11 @@ unresolvable or ambiguous wikilink; `serve` picks the sorted-first candidate for
 ambiguous one and renders an unresolvable one as a visibly-dead `<a data-wikilink>`
 that resolves on a later rebuild once the target exists.
 
-Not yet built (later milestones): host rollout, retiring `mkdocs-base` (M5). The
-explicit-`nav` override once planned for M2 was **dropped from the roadmap** — the
-auto-generated tree nav is the only navigation. Known divergence from MkDocs: filenames
+Milestone 5 (host rollout + `mkdocs-base` retirement) is **complete**: compositor
+is deployed to the build hosts and every `the docs` documentation site builds with
+it; the `mkdocs-base` base-config repo has been deleted. The explicit-`nav` override
+once planned for M2 was **dropped from the roadmap** — the auto-generated tree nav is
+the only navigation. Known divergence from MkDocs: filenames
 with spaces produce spaces in URLs (functional; slugification is a deferred decision).
 
 ## Layout
@@ -126,9 +128,9 @@ crates/
   wired into the top bar (search works in `build` output; unavailable under
   `serve`, see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
 
-Explicitly **not** in Milestone 1 (later plans): host rollout (M5).
-(`[[wikilinks]]`, admonitions, and the `serve` dev server have since landed; the
-explicit-`nav` override was dropped.)
+Explicitly **not** in Milestone 1: host rollout (M5).
+(`[[wikilinks]]`, admonitions, the `serve` dev server, and the M5 host rollout have
+all since landed; the explicit-`nav` override was dropped.)
 No functionality duplicated from `docgraph`: `build` fails only on an unresolvable
 internal link (a render error) — orphan/graph auditing stays docgraph's.
 
