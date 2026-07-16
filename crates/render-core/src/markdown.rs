@@ -40,7 +40,7 @@ pub fn comrak_options<'c>() -> Options<'c> {
     // Emit raw HTML (the admonition preprocessor injects <div>/<details>
     // wrappers). Also lets author-written HTML pass through, matching MkDocs/
     // python-markdown. Content is author-trusted, so untrusted-HTML XSS is out
-    // of scope. See docs/superpowers/specs/2026-07-16-m2-admonitions-design.md.
+    // of scope.
     o.render.unsafe_ = true;
     o
 }
@@ -368,7 +368,12 @@ mod tests {
             LinkPolicy::Strict,
         )
         .unwrap();
-        assert!(r.html.contains("href=\"tar.html\""), "{}", r.html);
+        assert!(
+            r.html.contains("<div class=\"admonition tip\">")
+                && r.html.contains("href=\"tar.html\""),
+            "{}",
+            r.html
+        );
     }
 
     #[test]
