@@ -15,6 +15,11 @@ no `compositor.toml` and no special files to work:
 - **No config** → defaults are synthesized (`site_name` from the folder; docs from
   `docs/` if present, else the dir itself). A *malformed* `compositor.toml` is still a
   hard, named error — only a *missing* one falls back. (See `config::SiteConfig::load`.)
+- **`exclude`** (optional, in `compositor.toml`) → a list of docs-dir-relative path
+  prefixes skipped in both rendering and asset-copy, and honored by `serve`'s
+  on-demand asset serving too — the `exclude_docs` analog, e.g.
+  `exclude = ["superpowers/"]`. Absent → nothing is excluded (graceful default, same
+  as no config at all).
 - **No home page** → `/` always resolves to a working landing, first match wins:
   a docs-root `index`/`home`/`readme` (any case) is promoted; else the **repo-root
   `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);
@@ -133,5 +138,8 @@ moves.
 
 - Build: `cargo build`
 - Test: `cargo test`
+- Render a site: `cargo run -p compositor -- build --dir <project>` — strict by
+  default (an unresolvable internal link fails the build); `--lenient` publishes
+  anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
 - Pre-merge gate: `just gate` (fmt-check + clippy + tests)
