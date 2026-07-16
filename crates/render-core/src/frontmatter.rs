@@ -4,6 +4,8 @@ use serde::Deserialize;
 pub struct FrontMatter {
     #[serde(default)]
     pub title: Option<String>,
+    #[serde(default)]
+    pub aliases: Vec<String>,
 }
 
 pub fn split_frontmatter(input: &str) -> (FrontMatter, String) {
@@ -55,5 +57,20 @@ mod tests {
         let (fm, body) = split_frontmatter(input);
         assert!(fm.title.is_none());
         assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn extracts_aliases_list() {
+        let input = "---\ntitle: Setup Guide\naliases: [setup, install]\n---\nbody";
+        let (fm, body) = split_frontmatter(input);
+        assert_eq!(fm.title.as_deref(), Some("Setup Guide"));
+        assert_eq!(fm.aliases, vec!["setup".to_string(), "install".to_string()]);
+        assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn absent_aliases_default_to_empty() {
+        let (fm, _) = split_frontmatter("---\ntitle: X\n---\nbody");
+        assert!(fm.aliases.is_empty());
     }
 }
