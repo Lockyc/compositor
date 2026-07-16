@@ -56,3 +56,20 @@ Not bugs that block use — conscious deferrals.
   `<details>` on anchor navigation; compositor does not yet. Low-likelihood (h2/h3
   inside a callout is rare) UX papercut; add the open-on-anchor script to
   `compositor.js` if it comes up.
+
+- **Accepted parsing edges (all low-likelihood, author-trusted input).** The
+  preprocessor (`render-core/src/admonitions.rs`) is deliberately simple; these
+  diverge from MkDocs only on unusual input and are left as-is:
+  - Body capture is indentation-based and *fence-unaware*: a fenced code block in
+    an admonition whose *closing* fence is de-indented below 4 spaces breaks
+    capture (the stray ` ``` ` is then read as a new top-level fence).
+  - An opener is recognised on the line *after* non-blank text with no blank line
+    between — more permissive than python-markdown, which requires a preceding
+    blank. Authors blank-line before `!!!`, so it rarely bites.
+  - An `# h1` placed *inside* an admonition body can become the page-title
+    candidate (`find_first_h1` walks the whole tree). h1-in-callout is unusual.
+  - `split_title` garbles a title only when a `"` sits in the *class* portion of
+    the opener (bizarre input); `deindent4` treats one leading tab as 4 spaces.
+- **The `color-mix()` background tint has no fallback** for Safari <16.2 / older
+  engines — the border and title still render (both plain `var()`), only the
+  subtle tint is lost. Graceful, not a break.
