@@ -268,4 +268,36 @@ mod tests {
         assert!(out.contains("&lt;b&gt;"), "{out}");
         assert!(out.contains("&amp;"), "{out}");
     }
+
+    #[test]
+    fn collapsible_closed_default_title() {
+        let out = preprocess_admonitions("??? note\n    Body text.\n");
+        assert!(out.contains("<details class=\"admonition note\">"), "{out}");
+        assert!(!out.contains(" open"), "{out}");
+        assert!(out.contains("<summary class=\"admonition-title\">Note</summary>"), "{out}");
+        assert!(out.contains("Body text."), "{out}");
+        assert!(out.contains("</details>"), "{out}");
+    }
+
+    #[test]
+    fn collapsible_open_default_title() {
+        let out = preprocess_admonitions("???+ note\n    Body text.\n");
+        assert!(out.contains("<details class=\"admonition note\" open>"), "{out}");
+        assert!(out.contains("<summary class=\"admonition-title\">Note</summary>"), "{out}");
+        assert!(out.contains("Body text."), "{out}");
+        assert!(out.contains("</details>"), "{out}");
+    }
+
+    #[test]
+    fn collapsible_with_custom_title() {
+        let src_closed = "??? warning \"Be careful\"\n    Body.\n";
+        let out_closed = preprocess_admonitions(src_closed);
+        assert!(out_closed.contains("<details class=\"admonition warning\">"), "{out_closed}");
+        assert!(out_closed.contains("<summary class=\"admonition-title\">Be careful</summary>"), "{out_closed}");
+
+        let src_open = "???+ tip \"Pro tip\"\n    Body.\n";
+        let out_open = preprocess_admonitions(src_open);
+        assert!(out_open.contains("<details class=\"admonition tip\" open>"), "{out_open}");
+        assert!(out_open.contains("<summary class=\"admonition-title\">Pro tip</summary>"), "{out_open}");
+    }
 }
