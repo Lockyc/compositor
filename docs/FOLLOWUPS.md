@@ -10,13 +10,18 @@ Not bugs that block use — conscious deferrals.
   `compositor.toml` (e.g. `site_name`) take effect only on restart. Fine for
   content editing; revisit if config becomes something you tune live.
 
-- **A panic while handling a request would abort the process.** The request
-  loop runs on the main thread and uses `.expect()` on the state lock. No
-  reachable panic path from external input exists today (the lock's critical
-  sections are panic-free, so it can't poison; the only other `expect` is a
-  static, always-valid header), so this is latent, not live. Defense-in-depth
-  for the unattended charter: isolate each request (`catch_unwind`) or move the
-  serve loop off the main thread so one bad request can't take the server down.
+- **A panic while handling a request kills that site's server.** The request
+  loop uses `.expect()` on the state lock. No reachable panic path from
+  external input exists today (the lock's critical sections are panic-free,
+  so it can't poison; the only other `expect` is a static, always-valid
+  header), so this is latent, not live.
+
+  **Severity differs per entry point.** Under `run_serve` (CLI) a panic
+  aborts a process a human is watching. Under `serve_handle` it silently
+  kills one site's serve thread while the host still believes it is live —
+  the host is responsible for noticing a dead thread. Defense-in-depth for
+  the unattended charter: isolate each request (`catch_unwind`) so one bad
+  request can't take a site down.
 
 - **The 404 page carries no live-reload script.** A tab showing a dead link's
   404 will not auto-reload when the missing file is later created (the *linking*

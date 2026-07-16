@@ -3,7 +3,8 @@
 A Rust static-site generator for Markdown doc repos: point it at a directory of
 Markdown and get a themed, navigable, search-indexed static site. Built as a
 from-scratch replacement for MkDocs across a fleet of documentation sites, and as a
-reusable render engine (`render-core`) that a future desktop viewer can embed.
+reusable render engine (`render-core`) that lector — a Tauri desktop docs console —
+embeds.
 
 [![CI](https://github.com/Lockyc/compositor/actions/workflows/ci.yml/badge.svg)](https://github.com/Lockyc/compositor/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-555)

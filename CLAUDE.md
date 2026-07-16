@@ -66,6 +66,12 @@ every viewer's browser by polling a `/__reload` epoch endpoint. `serve`'s accept
 limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
 — read it before extending `serve`.
 
+`serve` is exposed two ways: `run_serve` (the blocking CLI path) and
+**`serve_handle`** (non-blocking, returns a `ServeHandle{port}` and shuts down
+on demand) for host apps embedding many sites in one process — one thread per
+site, built from the same `setup`. compositor is consumed as a git dependency
+by **lector**, the docs console.
+
 The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
 (brand, Pagefind search box, light/dark toggle that persists across reload), a left
 tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
@@ -112,8 +118,8 @@ Cargo.toml                      # [workspace] members
 crates/
   render-core/                  # library: Markdown -> HTML, frontmatter, title
                                  # resolution, nav tree, link rewrite -> SiteModel.
-                                 # No CLI/disk assumptions, so `serve` and a future
-                                 # Tauri app can reuse it.
+                                 # No CLI/disk assumptions, so `serve` and lector
+                                 # (a Tauri app) reuse it.
   compositor/                   # CLI crate: config load, Pico-based theme wrap
                                  # (askama) served via a linked assets/compositor.css
                                  # + assets/compositor.js (no inline stylesheet),
