@@ -20,3 +20,16 @@ static STYLESHEET: LazyLock<String> = LazyLock::new(|| format!("{PICO_CSS}\n{OVE
 pub fn stylesheet() -> &'static str {
     &STYLESHEET
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn overrides_style_unresolved_wikilinks() {
+        assert!(
+            OVERRIDES_CSS.contains(r#"a[data-wikilink="true"]"#),
+            "compositor.css must style unresolved wikilinks"
+        );
+    }
+}

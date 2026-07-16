@@ -176,3 +176,13 @@
   #nav.is-open-on-mobile { transform: translateX(0); }
   .nav-open { overflow: hidden; }
 }
+
+/* Unresolved wikilinks. Resolved [[links]] render as plain <a>; an unresolved one
+   stays a comrak WikiLink node -> <a data-wikilink="true"> with no valid href.
+   Style it as a visibly dead, non-interactive "page doesn't exist yet" cue. */
+a[data-wikilink="true"] {
+  color: var(--pico-muted-color);
+  text-decoration: underline dashed;
+  cursor: default;
+  pointer-events: none;
+}
