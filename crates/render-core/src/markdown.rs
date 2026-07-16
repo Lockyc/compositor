@@ -390,4 +390,28 @@ mod tests {
         let id = &r.toc[0].id;
         assert!(r.html.contains(&format!("id=\"{id}\"")), "{}", r.html);
     }
+
+    #[test]
+    fn code_fence_inside_admonition_is_highlighted() {
+        // A fenced code block in an admonition body still goes through syntect in
+        // the single pass (the body renders as Markdown, not raw HTML).
+        let r = render_markdown(
+            "!!! note\n    ```rust\n    fn main() {}\n    ```\n",
+            Path::new(""),
+            &HashSet::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains("<div class=\"admonition note\">"),
+            "{}",
+            r.html
+        );
+        // syntect emits inline styles on the highlighted tokens.
+        assert!(
+            r.html.contains("style=\"") && r.html.contains("main"),
+            "{}",
+            r.html
+        );
+    }
 }

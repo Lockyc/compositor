@@ -35,3 +35,15 @@ Not bugs that block use — conscious deferrals.
   (a console 404 for `pagefind-ui.js`, no JS error). Search works in `build`
   output, which is what gets hosted. Wiring an in-memory index into `serve` is
   deferred.
+
+## Admonitions
+
+- **A TOC link to a heading inside a collapsed `???` doesn't auto-expand it.**
+  Headings inside an admonition are included in the right-rail TOC (matching
+  MkDocs' inclusion behavior). But when the heading lives inside a *collapsed*
+  `???`/`???` admonition, its `<details>` renders closed, so clicking the TOC
+  entry scrolls to an anchor inside hidden content and nothing visibly happens
+  until the reader expands the block. MkDocs Material adds JS that opens the
+  `<details>` on anchor navigation; compositor does not yet. Low-likelihood (h2/h3
+  inside a callout is rare) UX papercut; add the open-on-anchor script to
+  `compositor.js` if it comes up.
