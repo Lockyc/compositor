@@ -120,7 +120,7 @@ fn respond(req: Request, status: u16, ctype: &str, body: Vec<u8>) {
     let _ = req.respond(resp);
 }
 
-fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
+fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path, exclude: &[String]) {
     let raw = req.url().to_string();
     let path_only = raw.split(['?', '#']).next().unwrap_or("");
 
@@ -163,8 +163,14 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
         return;
     }
 
-    // On-demand asset straight from docs_dir (never .md, never traversing out).
-    if is_safe(&url) && !url.ends_with(".md") {
+    // On-demand asset straight from docs_dir (never .md, never traversing out,
+    // never a path the config excludes — `exclude` hides a tree from `build`,
+    // and serving it anyway on direct URL would defeat that, especially with
+    // `serve --host 0.0.0.0`).
+    if is_safe(&url)
+        && !url.ends_with(".md")
+        && !render_core::exclude::is_excluded(Path::new(&url), exclude)
+    {
         let asset = docs.join(&url);
         if asset.is_file() {
             if let Ok(bytes) = std::fs::read(&asset) {
@@ -192,7 +198,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
 /// race-free — and the write-guard critical section is limited to the two
 /// assignments so a panic during rendering can't poison the lock.
 fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, project_dir: &Path) {
-    match build_site(docs, LinkPolicy::Lenient) {
+    match build_site(docs, LinkPolicy::Lenient, &cfg.exclude) {
         Ok(site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
             let pages = build_pages(cfg, &site, project_dir, next_epoch);
@@ -248,9 +254,14 @@ fn spawn_watcher(
     });
 }
 
-pub(crate) fn serve_loop(server: Server, state: Arc<RwLock<ServedSite>>, docs: PathBuf) {
+pub(crate) fn serve_loop(
+    server: Server,
+    state: Arc<RwLock<ServedSite>>,
+    docs: PathBuf,
+    exclude: Vec<String>,
+) {
     for req in server.incoming_requests() {
-        handle(req, &state, &docs);
+        handle(req, &state, &docs, &exclude);
     }
 }
 
@@ -281,11 +292,15 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
-    let site = build_site(&docs, LinkPolicy::Lenient)?;
+    let site = build_site(&docs, LinkPolicy::Lenient, &cfg.exclude)?;
     let state = Arc::new(RwLock::new(ServedSite {
         pages: build_pages(&cfg, &site, project_dir, 0),
         epoch: 0,
     }));
+
+    // Captured before `cfg` moves into `spawn_watcher` below — the on-demand
+    // asset branch in `handle` needs it too.
+    let exclude = cfg.exclude.clone();
 
     spawn_watcher(
         Arc::clone(&state),
@@ -300,7 +315,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     if open {
         open_browser(&format!("http://{listen}/"));
     }
-    serve_loop(server, state, docs);
+    serve_loop(server, state, docs, exclude);
     Ok(())
 }
 
@@ -400,7 +415,7 @@ mod tests {
         let addr = server.server_addr().to_ip().unwrap();
         let state = sample_state();
         let docs = std::env::temp_dir();
-        std::thread::spawn(move || serve_loop(server, state, docs));
+        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
 
         let page = get(addr, "/");
         assert!(page.contains("200 OK"), "page resp: {page}");
@@ -429,7 +444,7 @@ mod tests {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let addr = server.server_addr().to_ip().unwrap();
         let docs = std::path::PathBuf::from(".");
-        std::thread::spawn(move || serve_loop(server, state, docs));
+        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
         let css = get(addr, "/assets/compositor.css");
         assert!(css.contains(".topbar"));
     }
@@ -440,9 +455,45 @@ mod tests {
         let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
         let addr = server.server_addr().to_ip().unwrap();
         let docs = std::path::PathBuf::from(".");
-        std::thread::spawn(move || serve_loop(server, state, docs));
+        std::thread::spawn(move || serve_loop(server, state, docs, vec![]));
         let js = get(addr, "/assets/compositor.js");
         assert!(js.contains("addEventListener"));
+    }
+
+    #[test]
+    fn on_demand_asset_honors_exclude() {
+        // An asset under an excluded prefix must not be servable by direct
+        // URL, even though it sits right on disk under `docs` — the whole
+        // point of `exclude` is to hide a tree, and the on-demand asset
+        // branch used to bypass it entirely (a network exposure under
+        // `serve --host 0.0.0.0`). A kept, non-excluded asset must still
+        // serve normally.
+        let tmp =
+            std::env::temp_dir().join(format!("compositor-serve-excl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("superpowers")).unwrap();
+        std::fs::create_dir_all(tmp.join("guides")).unwrap();
+        std::fs::write(tmp.join("superpowers/note.txt"), "secret").unwrap();
+        std::fs::write(tmp.join("guides/kept.txt"), "public").unwrap();
+
+        let state = sample_state();
+        let server = tiny_http::Server::http("127.0.0.1:0").unwrap();
+        let addr = server.server_addr().to_ip().unwrap();
+        let exclude = vec!["superpowers/".to_string()];
+        let docs_for_thread = tmp.clone();
+        std::thread::spawn(move || serve_loop(server, state, docs_for_thread, exclude));
+
+        let excluded = get(addr, "/superpowers/note.txt");
+        assert!(
+            excluded.contains("404"),
+            "excluded asset must not be served: {excluded}"
+        );
+
+        let kept = get(addr, "/guides/kept.txt");
+        assert!(kept.contains("200 OK"), "kept asset resp: {kept}");
+        assert!(kept.contains("public"), "kept asset resp: {kept}");
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
@@ -458,7 +509,7 @@ mod tests {
             docs_dir: Some("docs".to_string()),
             ..Default::default()
         };
-        let site = build_site(&docs, LinkPolicy::Lenient).unwrap();
+        let site = build_site(&docs, LinkPolicy::Lenient, &[]).unwrap();
         let state = RwLock::new(ServedSite {
             pages: build_pages(&cfg, &site, &tmp, 0),
             epoch: 0,

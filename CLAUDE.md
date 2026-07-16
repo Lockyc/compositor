@@ -15,6 +15,11 @@ no `compositor.toml` and no special files to work:
 - **No config** → defaults are synthesized (`site_name` from the folder; docs from
   `docs/` if present, else the dir itself). A *malformed* `compositor.toml` is still a
   hard, named error — only a *missing* one falls back. (See `config::SiteConfig::load`.)
+- **`exclude`** (optional, in `compositor.toml`) → a list of docs-dir-relative path
+  prefixes skipped in both rendering and asset-copy, and honored by `serve`'s
+  on-demand asset serving too — the `exclude_docs` analog, e.g.
+  `exclude = ["superpowers/"]`. Absent → nothing is excluded (graceful default, same
+  as no config at all).
 - **No home page** → `/` always resolves to a working landing, first match wins:
   a docs-root `index`/`home`/`readme` (any case) is promoted; else the **repo-root
   `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);
@@ -30,8 +35,10 @@ don't require the author to configure it.
 watching a terminal, so the tool must **degrade gracefully on content errors, never
 halt or swallow updates**. This splits the two commands' failure policy:
 
-- **`build`** — the one-shot path a human or CI watches — stays **strict**: an
-  unresolvable internal link is a hard error that fails the build loudly.
+- **`build`** — the one-shot path a human or CI watches — is **strict by
+  default**: an unresolvable internal link is a hard error that fails the
+  build loudly; `--lenient` opts out for unattended pipelines, rendering the
+  broken link as an honest 404 instead.
 - **`serve`** — the long-running unattended path — is
   **lenient**: it never halts on a content error. An unresolvable internal link
   still gets its `.md`→`.html` rewrite (surfacing as an honest 404), the rebuild
@@ -60,6 +67,14 @@ tree-nav that marks the active page (`aria-current`), and a server-side per-page
 during `build`; it is unavailable under `serve` (which renders in memory and never
 runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
 
+Milestone 2 (admonitions) is also **complete**: MkDocs/Material `!!!` callouts and
+`???`/`???+` collapsibles, with an arbitrary type word as the CSS class (known types
+color-coded, unknown types gracefully default), an optional custom or empty title, and
+nesting. A source preprocessor rewrites each block into an HTML wrapper whose body
+still renders as Markdown in the single comrak pass — which requires comrak's raw-HTML
+passthrough (`render.unsafe_ = true`), an intentional choice matching MkDocs: raw HTML
+in author-trusted docs is allowed, not escaped.
+
 Milestone 3 (`[[wikilinks]]` + frontmatter-driven KB titles) is **complete**:
 `[[Name]]` resolves a page by name against a tree-wide index — frontmatter title,
 filename stem (and its humanized form), `aliases`, or a path-qualified `[[dir/Name]]`
@@ -72,8 +87,9 @@ unresolvable or ambiguous wikilink; `serve` picks the sorted-first candidate for
 ambiguous one and renders an unresolvable one as a visibly-dead `<a data-wikilink>`
 that resolves on a later rebuild once the target exists.
 
-Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
-host rollout, retiring `mkdocs-base` (M5). Known divergence from MkDocs: filenames
+Not yet built (later milestones): host rollout, retiring `mkdocs-base` (M5). The
+explicit-`nav` override once planned for M2 was **dropped from the roadmap** — the
+auto-generated tree nav is the only navigation. Known divergence from MkDocs: filenames
 with spaces produce spaces in URLs (functional; slugification is a deferred decision).
 
 ## Layout
@@ -110,8 +126,9 @@ crates/
   wired into the top bar (search works in `build` output; unavailable under
   `serve`, see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
 
-Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
-admonitions, explicit-`nav` config override, the `serve` dev server, host rollout.
+Explicitly **not** in Milestone 1 (later plans): host rollout (M5).
+(`[[wikilinks]]`, admonitions, and the `serve` dev server have since landed; the
+explicit-`nav` override was dropped.)
 No functionality duplicated from `docgraph`: `build` fails only on an unresolvable
 internal link (a render error) — orphan/graph auditing stays docgraph's.
 
@@ -134,5 +151,8 @@ moves.
 
 - Build: `cargo build`
 - Test: `cargo test`
+- Render a site: `cargo run -p compositor -- build --dir <project>` — strict by
+  default (an unresolvable internal link fails the build); `--lenient` publishes
+  anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
 - Pre-merge gate: `just gate` (fmt-check + clippy + tests)

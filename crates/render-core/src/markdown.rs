@@ -40,6 +40,11 @@ pub fn comrak_options<'c>() -> Options<'c> {
     // prefix — changing this string here would desync TOC hrefs from anchors.
     o.extension.header_ids = Some(String::new());
     o.extension.wikilinks_title_after_pipe = true;
+    // Emit raw HTML (the admonition preprocessor injects <div>/<details>
+    // wrappers). Also lets author-written HTML pass through, matching MkDocs/
+    // python-markdown. Content is author-trusted, so untrusted-HTML XSS is out
+    // of scope.
+    o.render.unsafe_ = true;
     o
 }
 
@@ -61,7 +66,8 @@ pub fn render_markdown(
 ) -> Result<Rendered> {
     let arena = Arena::new();
     let options = comrak_options();
-    let root = parse_document(&arena, body, &options);
+    let preprocessed = crate::admonitions::preprocess_admonitions(body);
+    let root = parse_document(&arena, &preprocessed, &options);
 
     let first_h1 = find_first_h1(root);
     let toc = collect_toc(root);
@@ -660,5 +666,85 @@ mod tests {
         // Comrak does not parse wikilinks inside code spans, so it stays literal text.
         assert!(r.html.contains("[[getting-started]]"), "got: {}", r.html);
         assert!(!r.html.contains("<a href"), "got: {}", r.html);
+    }
+
+    #[test]
+    fn admonition_body_renders_as_markdown() {
+        let known = HashSet::new();
+        let r = render_markdown(
+            "!!! note\n    This is **bold** text.\n",
+            Path::new(""),
+            &known,
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains("<div class=\"admonition note\">"),
+            "{}",
+            r.html
+        );
+        assert!(r.html.contains("<strong>bold</strong>"), "{}", r.html);
+    }
+
+    #[test]
+    fn admonition_body_link_is_rewritten() {
+        let mut known = HashSet::new();
+        known.insert("cli/tar.html".to_string());
+        let r = render_markdown(
+            "!!! tip\n    See [tar](tar.md).\n",
+            Path::new("cli"),
+            &known,
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains("<div class=\"admonition tip\">")
+                && r.html.contains("href=\"tar.html\""),
+            "{}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn heading_inside_admonition_is_in_toc() {
+        let r = render_markdown(
+            "!!! note\n    ## Inner Heading\n\n    text\n",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert_eq!(r.toc.len(), 1);
+        assert_eq!(r.toc[0].text, "Inner Heading");
+        let id = &r.toc[0].id;
+        assert!(r.html.contains(&format!("id=\"{id}\"")), "{}", r.html);
+    }
+
+    #[test]
+    fn code_fence_inside_admonition_is_highlighted() {
+        // A fenced code block in an admonition body still goes through syntect in
+        // the single pass (the body renders as Markdown, not raw HTML).
+        let r = render_markdown(
+            "!!! note\n    ```rust\n    fn main() {}\n    ```\n",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains("<div class=\"admonition note\">"),
+            "{}",
+            r.html
+        );
+        // syntect emits inline styles on the highlighted tokens.
+        assert!(
+            r.html.contains("style=\"") && r.html.contains("main"),
+            "{}",
+            r.html
+        );
     }
 }

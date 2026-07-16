@@ -186,3 +186,76 @@ a[data-wikilink="true"] {
   cursor: default;
   pointer-events: none;
 }
+
+/* --- Admonitions (MkDocs/Material `!!!` and `???`). The type word(s) become
+   classes; known types are tinted below, unknown types fall back to the primary
+   accent via the --adm-accent custom property default. */
+.admonition {
+  margin: 1rem 0;
+  padding: 0.6rem 1rem;
+  border-left: 0.25rem solid var(--adm-accent, var(--pico-primary));
+  border-radius: 0.2rem;
+  background: color-mix(in srgb, var(--adm-accent, var(--pico-primary)) 8%, transparent);
+}
+.admonition > :last-child { margin-bottom: 0; }
+.admonition-title {
+  margin: 0 0 0.4rem;
+  font-weight: 600;
+  color: var(--adm-accent, var(--pico-primary));
+}
+/* The accent drives the left border, the background tint, AND the title text —
+   so its light-mode value must clear WCAG AA (4.5:1) on the light background and
+   its dark-mode value on the dark one (matching the AA discipline of the green
+   tokens above). Light mode uses darkened shades; dark mode brightens them.
+   Same light/dark/system-dark selector structure Pico's own tokens use. */
+.admonition.note     { --adm-accent: #1565c0; }
+.admonition.info     { --adm-accent: #006064; }
+.admonition.tip,
+.admonition.success  { --adm-accent: #0a7a41; }
+.admonition.question { --adm-accent: #33691e; }
+.admonition.warning  { --adm-accent: #8f4700; }
+.admonition.danger,
+.admonition.failure,
+.admonition.bug      { --adm-accent: #c62828; }
+.admonition.example  { --adm-accent: #5e35b1; }
+.admonition.quote    { --adm-accent: #616161; }
+
+:root[data-theme=dark] .admonition.note     { --adm-accent: #64b5f6; }
+:root[data-theme=dark] .admonition.info     { --adm-accent: #4dd0e1; }
+:root[data-theme=dark] .admonition.tip,
+:root[data-theme=dark] .admonition.success  { --adm-accent: #66bb6a; }
+:root[data-theme=dark] .admonition.question { --adm-accent: #9ccc65; }
+:root[data-theme=dark] .admonition.warning  { --adm-accent: #ffb74d; }
+:root[data-theme=dark] .admonition.danger,
+:root[data-theme=dark] .admonition.failure,
+:root[data-theme=dark] .admonition.bug      { --adm-accent: #ef9a9a; }
+:root[data-theme=dark] .admonition.example  { --adm-accent: #b39ddb; }
+:root[data-theme=dark] .admonition.quote    { --adm-accent: #bdbdbd; }
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme=light]) .admonition.note     { --adm-accent: #64b5f6; }
+  :root:not([data-theme=light]) .admonition.info     { --adm-accent: #4dd0e1; }
+  :root:not([data-theme=light]) .admonition.tip,
+  :root:not([data-theme=light]) .admonition.success  { --adm-accent: #66bb6a; }
+  :root:not([data-theme=light]) .admonition.question { --adm-accent: #9ccc65; }
+  :root:not([data-theme=light]) .admonition.warning  { --adm-accent: #ffb74d; }
+  :root:not([data-theme=light]) .admonition.danger,
+  :root:not([data-theme=light]) .admonition.failure,
+  :root:not([data-theme=light]) .admonition.bug      { --adm-accent: #ef9a9a; }
+  :root:not([data-theme=light]) .admonition.example  { --adm-accent: #b39ddb; }
+  :root:not([data-theme=light]) .admonition.quote    { --adm-accent: #bdbdbd; }
+}
+
+/* Collapsible variant: hide the native marker, add our own rotating caret. */
+details.admonition > summary.admonition-title {
+  cursor: pointer;
+  list-style: none;
+}
+details.admonition > summary.admonition-title::-webkit-details-marker { display: none; }
+details.admonition > summary.admonition-title::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.4rem;
+  transition: transform 0.15s ease;
+}
+details.admonition[open] > summary.admonition-title::before { transform: rotate(90deg); }

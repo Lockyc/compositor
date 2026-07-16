@@ -14,7 +14,7 @@ enum Marker {
 
 struct Opener {
     marker: Marker,
-    classes: String,     // space-joined, e.g. "danger inline"
+    classes: String,       // space-joined, e.g. "danger inline"
     title: Option<String>, // None = default; Some("") = suppress; Some(s) = literal
 }
 
@@ -61,11 +61,14 @@ pub fn preprocess_admonitions(src: &str) -> String {
             }
             let body_src = body_lines.join("\n");
             let body = preprocess_admonitions(&body_src); // recurse for nesting
-            // A leading blank line guarantees the wrapper starts a fresh HTML block.
+                                                          // A leading blank line guarantees the wrapper starts a fresh HTML block.
             if !out.is_empty() && !out.ends_with("\n\n") {
                 out.push('\n');
             }
             out.push_str(&render_wrapper(&op, body.trim_end()));
+            if j < lines.len() {
+                out.push('\n');
+            }
             i = j;
             continue;
         }
@@ -77,7 +80,8 @@ pub fn preprocess_admonitions(src: &str) -> String {
 }
 
 fn deindent4(line: &str) -> Option<&str> {
-    line.strip_prefix("    ").or_else(|| line.strip_prefix('\t'))
+    line.strip_prefix("    ")
+        .or_else(|| line.strip_prefix('\t'))
 }
 
 fn fence_open(line: &str) -> Option<(char, usize)> {
@@ -150,16 +154,22 @@ fn render_wrapper(op: &Opener, body: &str) -> String {
         Marker::DetailsOpen => ("details", "summary", "details", " open"),
     };
     let class_attr = html_escape(&format!("admonition {}", op.classes));
-    let title_html = match &op.title {
-        Some(t) if t.is_empty() => String::new(),
+    let is_collapsible = matches!(op.marker, Marker::DetailsClosed | Marker::DetailsOpen);
+    // Resolve the title text: None = render no title element at all. A collapsible
+    // must keep a <summary> click target, so an explicitly-empty title falls back
+    // to the default there (a summary-less <details> shows a browser-default label
+    // and makes the whole body the toggle). A static block may suppress its bar.
+    let title_text: Option<String> = match &op.title {
+        Some(t) if t.is_empty() => is_collapsible.then(|| default_title(&op.classes)),
+        Some(t) => Some(t.clone()),
+        None => Some(default_title(&op.classes)),
+    };
+    let title_html = match title_text {
         Some(t) => format!(
             "<{title_tag} class=\"admonition-title\">{}</{title_tag}>\n",
-            html_escape(t)
+            html_escape(&t)
         ),
-        None => format!(
-            "<{title_tag} class=\"admonition-title\">{}</{title_tag}>\n",
-            html_escape(&default_title(&op.classes))
-        ),
+        None => String::new(),
     };
     let mut s = String::new();
     s.push_str(&format!("<{open_tag} class=\"{class_attr}\"{open_attr}>\n"));
@@ -195,7 +205,10 @@ mod tests {
     fn static_block_default_title() {
         let out = preprocess_admonitions("!!! note\n    Body text.\n");
         assert!(out.contains("<div class=\"admonition note\">"), "{out}");
-        assert!(out.contains("<p class=\"admonition-title\">Note</p>"), "{out}");
+        assert!(
+            out.contains("<p class=\"admonition-title\">Note</p>"),
+            "{out}"
+        );
         assert!(out.contains("Body text."), "{out}");
         assert!(out.contains("</div>"), "{out}");
     }
@@ -204,7 +217,10 @@ mod tests {
     fn custom_title_used_verbatim() {
         let out = preprocess_admonitions("!!! warning \"Be careful\"\n    Body.\n");
         assert!(out.contains("<div class=\"admonition warning\">"), "{out}");
-        assert!(out.contains("<p class=\"admonition-title\">Be careful</p>"), "{out}");
+        assert!(
+            out.contains("<p class=\"admonition-title\">Be careful</p>"),
+            "{out}"
+        );
     }
 
     #[test]
@@ -217,7 +233,10 @@ mod tests {
     #[test]
     fn multiple_classes_passed_through() {
         let out = preprocess_admonitions("!!! danger inline\n    Body.\n");
-        assert!(out.contains("<div class=\"admonition danger inline\">"), "{out}");
+        assert!(
+            out.contains("<div class=\"admonition danger inline\">"),
+            "{out}"
+        );
         // Default title is the first class word, capitalized.
         assert!(out.contains(">Danger</p>"), "{out}");
     }
@@ -231,7 +250,8 @@ mod tests {
 
     #[test]
     fn nested_admonition_recurses() {
-        let src = "!!! note \"Outer\"\n    Outer body.\n\n    !!! tip \"Inner\"\n        Inner body.\n";
+        let src =
+            "!!! note \"Outer\"\n    Outer body.\n\n    !!! tip \"Inner\"\n        Inner body.\n";
         let out = preprocess_admonitions(src);
         assert!(out.contains("<div class=\"admonition note\">"), "{out}");
         assert!(out.contains("<div class=\"admonition tip\">"), "{out}");
@@ -263,9 +283,88 @@ mod tests {
     }
 
     #[test]
+    fn blank_line_separates_admonition_from_following_content() {
+        let out = preprocess_admonitions("!!! note\n    Body.\n\nNext paragraph.\n");
+        // A blank line must follow the closing tag so downstream Markdown parsing
+        // treats the following text as its own block, not raw HTML block content.
+        assert!(out.contains("</div>\n\nNext paragraph."), "{out}");
+    }
+
+    #[test]
     fn escapes_html_in_title_and_class() {
-        let out = preprocess_admonitions("!!! note \"a <b> & \\\"c\\\"\"\n    Body.\n");
+        let out = preprocess_admonitions("!!! note <danger&x> \"a <b> & \\\"c\\\"\"\n    Body.\n");
+        // Title special chars escaped.
         assert!(out.contains("&lt;b&gt;"), "{out}");
         assert!(out.contains("&amp;"), "{out}");
+        // Class word special chars escaped in the class attribute too.
+        assert!(out.contains("&lt;danger&amp;x&gt;"), "{out}");
+    }
+
+    #[test]
+    fn collapsible_closed_default_title() {
+        let out = preprocess_admonitions("??? note\n    Body text.\n");
+        assert!(out.contains("<details class=\"admonition note\">"), "{out}");
+        // The closed variant must not carry the `open` attribute on its tag.
+        assert!(!out.contains("admonition note\" open>"), "{out}");
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
+        );
+        assert!(out.contains("Body text."), "{out}");
+        assert!(out.contains("</details>"), "{out}");
+    }
+
+    #[test]
+    fn collapsible_open_default_title() {
+        let out = preprocess_admonitions("???+ note\n    Body text.\n");
+        assert!(
+            out.contains("<details class=\"admonition note\" open>"),
+            "{out}"
+        );
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
+        );
+        assert!(out.contains("Body text."), "{out}");
+        assert!(out.contains("</details>"), "{out}");
+    }
+
+    #[test]
+    fn collapsible_with_custom_title() {
+        let src_closed = "??? warning \"Be careful\"\n    Body.\n";
+        let out_closed = preprocess_admonitions(src_closed);
+        assert!(
+            out_closed.contains("<details class=\"admonition warning\">"),
+            "{out_closed}"
+        );
+        assert!(
+            out_closed.contains("<summary class=\"admonition-title\">Be careful</summary>"),
+            "{out_closed}"
+        );
+
+        let src_open = "???+ tip \"Pro tip\"\n    Body.\n";
+        let out_open = preprocess_admonitions(src_open);
+        assert!(
+            out_open.contains("<details class=\"admonition tip\" open>"),
+            "{out_open}"
+        );
+        assert!(
+            out_open.contains("<summary class=\"admonition-title\">Pro tip</summary>"),
+            "{out_open}"
+        );
+    }
+
+    #[test]
+    fn collapsible_empty_title_falls_back_to_default_summary() {
+        // A collapsible needs a clickable <summary>; an explicitly-empty title
+        // must not drop it (a summary-less <details> shows a browser-default
+        // label). The block variant still suppresses its title bar (see
+        // `empty_title_suppresses_title_element`).
+        let out = preprocess_admonitions("??? note \"\"\n    Body.\n");
+        assert!(out.contains("<details class=\"admonition note\">"), "{out}");
+        assert!(
+            out.contains("<summary class=\"admonition-title\">Note</summary>"),
+            "{out}"
+        );
     }
 }

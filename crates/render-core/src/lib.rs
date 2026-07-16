@@ -1,4 +1,5 @@
 pub mod admonitions;
+pub mod exclude;
 pub mod frontmatter;
 pub mod markdown;
 pub mod nav;

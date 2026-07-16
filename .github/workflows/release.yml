@@ -1,0 +1,37 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  linux-binary:
+    runs-on: ubuntu-22.04  # conservative glibc for the Debian LXC build hosts
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: build release binary
+        run: cargo build --release -p compositor --target x86_64-unknown-linux-gnu
+
+      - name: stage artifact
+        run: |
+          install -Dm755 target/x86_64-unknown-linux-gnu/release/compositor \
+            dist/compositor-x86_64-unknown-linux-gnu
+          (cd dist && sha256sum compositor-x86_64-unknown-linux-gnu > compositor-x86_64-unknown-linux-gnu.sha256)
+
+      - name: publish release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" \
+            dist/compositor-x86_64-unknown-linux-gnu \
+            dist/compositor-x86_64-unknown-linux-gnu.sha256 \
+            --title "${GITHUB_REF_NAME}" \
+            --generate-notes

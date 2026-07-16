@@ -15,7 +15,7 @@ fn title_prefers_frontmatter_then_h1_then_filename() {
     write(&tmp, "b.md", "# From Heading\n\nx");
     write(&tmp, "cli/git-repos.md", "plain body, no heading");
 
-    let site = build_site(&tmp, render_core::LinkPolicy::Strict).unwrap();
+    let site = build_site(&tmp, render_core::LinkPolicy::Strict, &[]).unwrap();
     let by = |name: &str| {
         site.pages
             .iter()
