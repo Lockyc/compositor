@@ -66,6 +66,9 @@ pub fn preprocess_admonitions(src: &str) -> String {
                 out.push('\n');
             }
             out.push_str(&render_wrapper(&op, body.trim_end()));
+            if j < lines.len() {
+                out.push('\n');
+            }
             i = j;
             continue;
         }
@@ -263,10 +266,21 @@ mod tests {
     }
 
     #[test]
+    fn blank_line_separates_admonition_from_following_content() {
+        let out = preprocess_admonitions("!!! note\n    Body.\n\nNext paragraph.\n");
+        // A blank line must follow the closing tag so downstream Markdown parsing
+        // treats the following text as its own block, not raw HTML block content.
+        assert!(out.contains("</div>\n\nNext paragraph."), "{out}");
+    }
+
+    #[test]
     fn escapes_html_in_title_and_class() {
-        let out = preprocess_admonitions("!!! note \"a <b> & \\\"c\\\"\"\n    Body.\n");
+        let out = preprocess_admonitions("!!! note <danger&x> \"a <b> & \\\"c\\\"\"\n    Body.\n");
+        // Title special chars escaped.
         assert!(out.contains("&lt;b&gt;"), "{out}");
         assert!(out.contains("&amp;"), "{out}");
+        // Class word special chars escaped in the class attribute too.
+        assert!(out.contains("&lt;danger&amp;x&gt;"), "{out}");
     }
 
     #[test]
