@@ -65,24 +65,37 @@
   color: var(--pico-color);
 }
 .topbar .search { min-width: 0; }
-/* The two topbar controls are real, filled buttons. They carry Pico's `.secondary`
-   class (see page.html), which supplies a theme-correct grey fill and an AA-contrast
-   label in BOTH light and dark — so we must NOT set `color`/`background` here: inside
-   a Pico button `--pico-color` is re-scoped to `--pico-primary-inverse`, so a naive
-   `color: var(--pico-color)` renders white-on-white in light mode. We override only
-   layout: size to content and sit inline in the bar (Pico buttons are full-width). */
+/* The two topbar controls are accent-outline buttons: transparent with a green
+   border + green label that fills on hover, readable on both themes. Colour is set
+   from `--pico-primary` (NOT `--pico-color`, which Pico re-scopes to
+   `--pico-primary-inverse` inside a button — a plain `color: var(--pico-color)`
+   would render white-on-white in light mode). A fixed `height` + border-box keeps
+   both buttons the same height even though the toggle's glyph is a larger font. */
 .topbar .theme-toggle,
 .topbar .nav-toggle {
   display: inline-flex;
   align-items: center;
-  gap: 0.35rem;
+  justify-content: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  height: 2.15rem;
   width: auto;
   margin: 0;
-  padding: 0.35rem 0.7rem;
-  font-size: 1rem;
+  padding: 0 0.7rem;
+  font-size: 0.95rem;
   line-height: 1;
+  background: transparent;
+  border: 1px solid var(--pico-primary);
+  border-radius: var(--pico-border-radius);
+  color: var(--pico-primary);
+  cursor: pointer;
 }
-.topbar .theme-toggle { font-size: 1.15rem; }
+.topbar .theme-toggle { padding: 0 0.55rem; font-size: 1.15rem; }
+.topbar .theme-toggle:hover,
+.topbar .nav-toggle:hover {
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse);
+}
 .topbar .nav-toggle { display: none; }
 
 /* --- Grid layout: menu · doc · (optional) toc. */

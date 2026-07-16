@@ -15,8 +15,8 @@
   <header class="topbar">
     <a class="brand" href="{{ home_href }}">{{ site_name }}</a>
     <div class="search" id="search"></div>
-    <button class="theme-toggle secondary" type="button" aria-label="Toggle light/dark theme">◐</button>
-    <button class="nav-toggle secondary" type="button" aria-label="Toggle navigation" aria-expanded="false"><span class="nav-toggle-icon" aria-hidden="true">☰</span> Menu</button>
+    <button class="theme-toggle" type="button" aria-label="Toggle light/dark theme">◐</button>
+    <button class="nav-toggle" type="button" aria-label="Toggle navigation" aria-expanded="false"><span class="nav-toggle-icon" aria-hidden="true">☰</span> Menu</button>
   </header>
   <main class="layout{% if has_toc %} has-toc{% endif %}">
     <aside id="nav" data-pagefind-ignore>{{ nav_html|safe }}</aside>
