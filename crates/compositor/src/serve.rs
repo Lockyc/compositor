@@ -399,34 +399,13 @@ impl ServeHandle {
         if let Some(thread) = self.serve_thread.take() {
             let _ = thread.join();
         }
-
-        // Dropping our last `Server` reference triggers tiny_http's own `Drop for Server`,
-        // which signals *its* internal accept thread and self-connects to unblock it — but
-        // returns without waiting for that thread to actually exit and release the listening
-        // socket (tiny_http exposes no join handle for it). So the OS-level release is
-        // asynchronous relative to this function returning. Poll-verify the port is truly free
-        // (bounded, not indefinite) rather than assume the drop above was synchronous — a real
-        // postcondition check, not a fixed delay: it returns the instant the port is free, and
-        // only degrades to the full bound if release is unusually slow.
-        //
-        // The probe uses a plain `std::net::TcpListener`, not another `tiny_http::Server` — a
-        // std listener's drop is a synchronous fd close with no background thread, so the probe
-        // can't reintroduce the very race it's checking for.
-        if let Some(server) = self.server.take() {
-            drop(server);
-            let port = self.port;
-            let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
-            loop {
-                if std::net::TcpListener::bind(("127.0.0.1", port)).is_ok() {
-                    break;
-                }
-                if std::time::Instant::now() >= deadline {
-                    eprintln!("warning: port {port} still bound 2s after ServeHandle shutdown");
-                    break;
-                }
-                std::thread::sleep(std::time::Duration::from_millis(5));
-            }
-        }
+        // Drop our last `Server` reference — everything this handle owns. `take()` also makes
+        // a second `stop()` call (reachable from both `shutdown(self)` and `Drop` on the same
+        // value) a safe no-op. Note this does *not* guarantee the OS-level port is free the
+        // instant this returns: tiny_http's own `Drop for Server` signals its internal accept
+        // thread but doesn't wait for it to exit (see the test, which is the one place that
+        // postcondition actually matters).
+        self.server.take();
     }
 }
 
@@ -733,12 +712,32 @@ mod tests {
 
         h.shutdown();
 
-        // The port being re-bindable proves the serve thread actually exited, rather than
-        // shutdown() merely returning while the loop still holds the listener.
-        assert!(
-            tiny_http::Server::http(("127.0.0.1", port)).is_ok(),
-            "port {port} still bound after shutdown"
-        );
+        // This proves `ServeHandle` released its `Server` — the leak this plan exists to
+        // prevent. (It does *not* prove the serve thread exited; `shutdown()`'s internal
+        // `serve_thread.join()` already does that, and the serve thread never held the
+        // listener in the first place — tiny_http's own internal accept thread does.)
+        //
+        // That accept thread is why this needs a retry rather than a single bind: `Drop for
+        // Server` signals the accept thread and self-connects to unblock its blocking
+        // `accept()` call, then returns immediately — it does not wait for that thread to
+        // observe the signal, break its loop, and actually drop the `TcpListener`, which is
+        // what releases the OS-level port. So the port's release is asynchronous relative to
+        // `shutdown()` returning. Retrying the bind *is* the fix: the retry and the assertion
+        // are the same operation, so there is no separate probe-then-assert gap for another
+        // test (this file binds `127.0.0.1:0` in several places, running in parallel) to steal
+        // the port in between. Bounded, not indefinite — a hang here is a real regression, not
+        // something to paper over with a longer sleep.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        let rebound = loop {
+            match tiny_http::Server::http(("127.0.0.1", port)) {
+                Ok(s) => break Some(s),
+                Err(_) if std::time::Instant::now() < deadline => {
+                    std::thread::sleep(std::time::Duration::from_millis(5));
+                }
+                Err(_) => break None,
+            }
+        };
+        assert!(rebound.is_some(), "port {port} still bound after shutdown");
 
         std::fs::remove_dir_all(&tmp).ok();
     }
