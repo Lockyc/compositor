@@ -187,17 +187,18 @@ fn plan_wikilink(
     wiki: &WikiIndex,
     policy: LinkPolicy,
 ) -> Result<WikiAction> {
-    // comrak percent-encodes the parsed url; decode to recover the typed name.
-    let decoded = percent_encoding::percent_decode_str(raw_url)
-        .decode_utf8_lossy()
-        .into_owned();
-    let (name, frag) = match decoded.split_once('#') {
+    // comrak's `clean_url` (applied to a parsed wikilink's url) trims, unescapes
+    // HTML entities, and un-backslash-escapes — it does NOT percent-encode. So
+    // `raw_url` is already the plain typed name (spaces intact); no decode step
+    // is needed, and running one would corrupt a name containing a literal
+    // `%xx` sequence.
+    let (name, frag) = match raw_url.split_once('#') {
         Some((n, f)) => (n, Some(f)),
-        None => (decoded.as_str(), None),
+        None => (raw_url, None),
     };
-    // Bare `[[name]]` when comrak's default label equals the decoded url; a piped
+    // Bare `[[name]]` when comrak's default label equals the typed url; a piped
     // `[[name|label]]` differs, so the author's label is used verbatim.
-    let bare = label == decoded;
+    let bare = label == raw_url;
 
     let make = |t: &WikiTarget| -> WikiAction {
         let mut href = relative_url(page_dir, &t.url);
@@ -596,6 +597,7 @@ mod tests {
             r.html
         );
         assert!(r.html.contains("No Such Page"), "got: {}", r.html);
+        assert!(r.html.contains(r#"href="""#), "got: {}", r.html);
     }
 
     #[test]

@@ -105,7 +105,9 @@ impl WikiIndex {
 
 /// Normalize a wikilink key: lowercase, trim, collapse internal whitespace runs
 /// to a single space. Slashes are preserved (path-qualified keys keep them).
-/// The caller percent-decodes comrak's cleaned url before calling this.
+/// The caller passes comrak's cleaned url directly — `clean_url` trims and
+/// unescapes HTML entities/backslashes but does not percent-encode, so the url
+/// is already the plain typed name.
 pub fn normalize_key(s: &str) -> String {
     s.split_whitespace()
         .collect::<Vec<_>>()

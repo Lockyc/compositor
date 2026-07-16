@@ -822,7 +822,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "comrak",
- "percent-encoding",
  "serde",
  "serde_yaml",
  "walkdir",
