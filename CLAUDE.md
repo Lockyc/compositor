@@ -60,10 +60,19 @@ tree-nav that marks the active page (`aria-current`), and a server-side per-page
 during `build`; it is unavailable under `serve` (which renders in memory and never
 runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
 
-Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
-`[[wikilinks]]` + frontmatter-driven KB titles (M3); host rollout, retiring
-`mkdocs-base` (M5). Known divergence from MkDocs: filenames with spaces produce
-spaces in URLs (functional; slugification is a deferred decision).
+Milestone 2 (admonitions) is also **complete**: MkDocs/Material `!!!` callouts and
+`???`/`???+` collapsibles, with an arbitrary type word as the CSS class (known types
+color-coded, unknown types gracefully default), an optional custom or empty title, and
+nesting. A source preprocessor rewrites each block into an HTML wrapper whose body
+still renders as Markdown in the single comrak pass — which requires comrak's raw-HTML
+passthrough (`render.unsafe_ = true`), an intentional choice matching MkDocs: raw HTML
+in author-trusted docs is allowed, not escaped.
+
+Not yet built (later milestones): `[[wikilinks]]` + frontmatter-driven KB titles
+(M3); host rollout, retiring `mkdocs-base` (M5). The explicit-`nav` override once
+planned for M2 was **dropped from the roadmap** — the auto-generated tree nav is the
+only navigation. Known divergence from MkDocs: filenames with spaces produce spaces
+in URLs (functional; slugification is a deferred decision).
 
 ## Layout
 
@@ -99,8 +108,9 @@ crates/
   wired into the top bar (search works in `build` output; unavailable under
   `serve`, see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
 
-Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]`, `!!!`
-admonitions, explicit-`nav` config override, the `serve` dev server, host rollout.
+Explicitly **not** in Milestone 1 (later plans): `[[wikilinks]]` (M3), host rollout
+(M5). (Admonitions and the `serve` dev server have since landed; the explicit-`nav`
+override was dropped.)
 No functionality duplicated from `docgraph`: `build` fails only on an unresolvable
 internal link (a render error) — orphan/graph auditing stays docgraph's.
 
