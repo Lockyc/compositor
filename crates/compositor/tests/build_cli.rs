@@ -202,3 +202,31 @@ fn build_stylesheet_carries_admonition_rules() {
     );
     fs::remove_dir_all(&tmp).ok();
 }
+
+#[test]
+fn build_renders_admonition_into_html() {
+    let tmp =
+        std::env::temp_dir().join(format!("compositor-build-adm-html-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"Test\"\n").unwrap();
+    fs::write(
+        tmp.join("docs/index.md"),
+        "# Home\n\n!!! warning \"Heads up\"\n    Be **careful** here.\n",
+    )
+    .unwrap();
+
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+    let html = fs::read_to_string(tmp.join("site/index.html")).unwrap();
+    assert!(
+        html.contains("<div class=\"admonition warning\">"),
+        "{html}"
+    );
+    assert!(
+        html.contains("<p class=\"admonition-title\">Heads up</p>"),
+        "{html}"
+    );
+    assert!(html.contains("<strong>careful</strong>"), "{html}");
+    fs::remove_dir_all(&tmp).ok();
+}
