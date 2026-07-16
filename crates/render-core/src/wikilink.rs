@@ -55,9 +55,17 @@ impl WikiIndex {
             url: url.to_string(),
             title: title.to_string(),
         };
-        // tier 0: full rel-path stem (e.g. "guide/setup") — path-qualified links.
-        let path_stem = rel_path.with_extension("");
-        self.insert(&normalize_key(&path_stem.to_string_lossy()), 0, &target);
+        // tier 0: full rel-path stem (e.g. "guide/setup") — path-qualified links
+        // only. A root page's rel-path stem IS its bare name (no directory), so
+        // registering it at tier 0 would put a root page's bare name at the
+        // highest-precedence tier, wrongly outranking another page's frontmatter
+        // title (tier 1) on the same key and silently suppressing the strict
+        // "ambiguous" error. A root page needs no tier-0 entry: `[[name]]` for it
+        // already resolves via tier 3 (stem/humanized stem).
+        if rel_path.parent().is_some_and(|p| !p.as_os_str().is_empty()) {
+            let path_stem = rel_path.with_extension("");
+            self.insert(&normalize_key(&path_stem.to_string_lossy()), 0, &target);
+        }
         // tier 1: canonical title.
         self.insert(&normalize_key(title), 1, &target);
         // tier 2: aliases.
@@ -175,6 +183,18 @@ mod tests {
             "setup",
             &[],
         );
+        // notes/quick-tips.md title "Notes" (unrelated to its stem) — isolates the
+        // humanized-stem (tier 3) registration: unlike getting-started above,
+        // nothing else registers "quick tips" at a higher tier, so a query of the
+        // humanized form actually exercises tier 3 rather than being masked by a
+        // matching title.
+        w.add_page(
+            "notes/quick-tips.html",
+            "Notes",
+            &PathBuf::from("notes/quick-tips.md"),
+            "quick-tips",
+            &[],
+        );
         w
     }
 
@@ -197,10 +217,18 @@ mod tests {
 
     #[test]
     fn resolves_by_stem_and_humanized_stem() {
-        // stem form
+        // Raw hyphen stem: resolves directly via tier 3.
         assert!(matches!(
             idx().resolve("getting-started"),
             WikiResolution::Resolved(t) if t.url == "guide/getting-started.html"
+        ));
+        // Humanized form, on a page whose title does NOT also match it (unlike
+        // "getting-started" -> "Getting Started", which is masked by the tier-1
+        // title on the same fixture) — isolates the tier-3 humanized-stem
+        // registration itself.
+        assert!(matches!(
+            idx().resolve("quick tips"),
+            WikiResolution::Resolved(t) if t.url == "notes/quick-tips.html"
         ));
     }
 
