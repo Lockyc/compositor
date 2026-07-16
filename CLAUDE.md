@@ -88,7 +88,7 @@ ambiguous one and renders an unresolvable one as a visibly-dead `<a data-wikilin
 that resolves on a later rebuild once the target exists.
 
 Milestone 5 (host rollout + `mkdocs-base` retirement) is **complete**: compositor
-is deployed to the build hosts and every `the docs` documentation site builds with
+is deployed to its build hosts and every consuming documentation site builds with
 it; the `mkdocs-base` base-config repo has been deleted. The explicit-`nav` override
 once planned for M2 was **dropped from the roadmap** — the auto-generated tree nav is
 the only navigation. Known divergence from MkDocs: filenames
