@@ -36,7 +36,7 @@ pub fn render_page(cfg: &SiteConfig, nav: &NavTree, page: &Page) -> String {
         page_title: &page.title,
         site_name: &cfg.site_name,
         // The site name links back to the home page (`/`), relative to this
-        // page's depth — the only always-present way back to `/`.
+        // page's depth (the menu also carries a "Home" entry, see `nav_to_html`).
         home_href: format!("{prefix}index.html"),
         asset_prefix: prefix.clone(),
         nav_html: nav_to_html(nav, &prefix, &page.url),
@@ -217,6 +217,24 @@ fn is_root_named(page: &Page, stem: &str) -> bool {
 
 fn nav_to_html(nav: &NavTree, prefix: &str, current_url: &str) -> String {
     let mut s = String::from("<ul>");
+    // The menu leads with a "Home" link back to `/` — unless a real page already
+    // occupies index.html (a docs-root index.md), which is itself the home and
+    // already leads the tree, so a synthetic entry would just duplicate it.
+    let has_index_page = nav
+        .0
+        .iter()
+        .any(|n| matches!(n, NavNode::Page { url, .. } if url == "index.html"));
+    if !has_index_page {
+        let current = if current_url == "index.html" {
+            " aria-current=\"page\""
+        } else {
+            ""
+        };
+        s.push_str(&format!(
+            "<li><a href=\"{}\"{current}>Home</a></li>",
+            html_escape(&format!("{prefix}index.html"))
+        ));
+    }
     for node in &nav.0 {
         node_html(node, prefix, current_url, &mut s);
     }
@@ -381,6 +399,56 @@ mod tests {
         assert!(!home.html.contains("R"));
         assert!(home.html.contains("<h1>S</h1>"));
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn menu_includes_home_link_when_no_index_page() {
+        // A synthetic home (repo README / generated index) is not a nav page, so
+        // the menu gains an explicit "Home" entry linking back to `/`.
+        let cfg = cfg_named("S");
+        let nav = NavTree(vec![NavNode::Page {
+            title: "Guide".into(),
+            url: "guide.html".into(),
+        }]);
+        let out = render_page(&cfg, &nav, &page("guide.md", "guide.html", "<p>x</p>"));
+        assert!(
+            out.contains(r#"<li><a href="index.html">Home</a></li>"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn menu_home_is_marked_current_on_the_home_page() {
+        let cfg = cfg_named("S");
+        let nav = NavTree(vec![NavNode::Page {
+            title: "Guide".into(),
+            url: "guide.html".into(),
+        }]);
+        let out = render_page(&cfg, &nav, &page("index.md", "index.html", "<p>home</p>"));
+        assert!(
+            out.contains(r#"<li><a href="index.html" aria-current="page">Home</a></li>"#),
+            "{out}"
+        );
+    }
+
+    #[test]
+    fn menu_omits_synthetic_home_when_a_real_index_page_exists() {
+        // A docs-root index.md already occupies index.html and leads the menu, so
+        // no duplicate synthetic "Home" is added.
+        let cfg = cfg_named("S");
+        let nav = NavTree(vec![
+            NavNode::Page {
+                title: "Welcome".into(),
+                url: "index.html".into(),
+            },
+            NavNode::Page {
+                title: "Guide".into(),
+                url: "guide.html".into(),
+            },
+        ]);
+        let out = render_page(&cfg, &nav, &page("guide.md", "guide.html", "<p>x</p>"));
+        assert!(!out.contains(">Home</a>"), "{out}");
+        assert!(out.contains(">Welcome</a>"));
     }
 
     fn page_with_toc(url: &str, html: &str, toc: Vec<render_core::markdown::TocEntry>) -> Page {
