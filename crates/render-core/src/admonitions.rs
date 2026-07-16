@@ -105,10 +105,9 @@ fn parse_opener(line: &str) -> Option<Opener> {
         (Marker::DetailsOpen, r)
     } else if let Some(r) = line.strip_prefix("???") {
         (Marker::DetailsClosed, r)
-    } else if let Some(r) = line.strip_prefix("!!!") {
-        (Marker::Block, r)
     } else {
-        return None;
+        let r = line.strip_prefix("!!!")?;
+        (Marker::Block, r)
     };
     if !rest.starts_with([' ', '\t']) {
         return None; // marker must be followed by whitespace
