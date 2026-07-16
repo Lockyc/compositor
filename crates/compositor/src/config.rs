@@ -14,6 +14,10 @@ pub struct SiteConfig {
     pub docs_dir: Option<String>,
     #[serde(default)]
     pub out_dir: Option<String>,
+    /// Docs-dir-relative path prefixes to skip when rendering and copying assets
+    /// (the `exclude_docs` analog). E.g. `["superpowers/"]`, `["inbox/"]`.
+    #[serde(default)]
+    pub exclude: Vec<String>,
 }
 
 impl SiteConfig {
@@ -134,6 +138,25 @@ mod tests {
         assert!(
             format!("{err:#}").contains("compositor.toml"),
             "err: {err:#}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn exclude_defaults_empty_and_parses_list() {
+        let tmp = scratch("excl");
+        // Missing key -> empty.
+        std::fs::write(tmp.join("compositor.toml"), "site_name = \"X\"\n").unwrap();
+        assert!(SiteConfig::load(&tmp).unwrap().exclude.is_empty());
+        // Present list -> parsed.
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\nexclude = [\"superpowers/\", \"inbox/\"]\n",
+        )
+        .unwrap();
+        assert_eq!(
+            SiteConfig::load(&tmp).unwrap().exclude,
+            vec!["superpowers/".to_string(), "inbox/".to_string()]
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
