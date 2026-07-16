@@ -35,3 +35,15 @@ Not bugs that block use — conscious deferrals.
   (a console 404 for `pagefind-ui.js`, no JS error). Search works in `build`
   output, which is what gets hosted. Wiring an in-memory index into `serve` is
   deferred.
+
+## Wikilinks (M3)
+
+- **No shortest-unique-suffix path matching.** Path-qualified `[[dir/Name]]` matches
+  the *exact* rel-path stem only. Obsidian's shortest-unique-suffix resolution
+  (`[[Name]]` matching `a/b/Name` when unique) is not implemented; use the full path
+  from the docs root, or a title/alias.
+- **No embeds / transclusion.** `![[Name]]` is not supported (renders as an image-style
+  wikilink comrak won't resolve). Deferred; add if an the docs KB needs inline embeds.
+- **Anchors are not validated.** `[[Name#section]]` appends `#section` to the href
+  without checking the target page actually has that heading id — consistent with the
+  existing `.md#frag` passthrough. A wrong anchor lands on the page top, not an error.

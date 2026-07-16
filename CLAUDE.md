@@ -60,10 +60,19 @@ tree-nav that marks the active page (`aria-current`), and a server-side per-page
 during `build`; it is unavailable under `serve` (which renders in memory and never
 runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
 
+Milestone 3 (`[[wikilinks]]` + frontmatter-driven KB titles) is **complete**:
+`[[Name]]` resolves a page by name against a tree-wide index — frontmatter title,
+filename stem (and its humanized form), `aliases`, or a path-qualified `[[dir/Name]]`
+— with the frontmatter title driving both link identity and the rendered link text.
+Matching is case-insensitive. `[[Name|label]]` overrides the text and `[[Name#anchor]]`
+deep-links. Resolution honors the strict/lenient split: `build` hard-errors on an
+unresolvable or ambiguous wikilink; `serve` picks the sorted-first candidate for an
+ambiguous one and renders an unresolvable one as a visibly-dead `<a data-wikilink>`
+that resolves on a later rebuild once the target exists.
+
 Not yet built (later milestones): `!!!` admonitions + explicit-`nav` override (M2);
-`[[wikilinks]]` + frontmatter-driven KB titles (M3); host rollout, retiring
-`mkdocs-base` (M5). Known divergence from MkDocs: filenames with spaces produce
-spaces in URLs (functional; slugification is a deferred decision).
+host rollout, retiring `mkdocs-base` (M5). Known divergence from MkDocs: filenames
+with spaces produce spaces in URLs (functional; slugification is a deferred decision).
 
 ## Layout
 
@@ -87,7 +96,7 @@ crates/
 - GFM: headings, lists, tables, task lists, autolinks, strikethrough, images,
   blockquotes.
 - Fenced code with syntect highlighting.
-- Frontmatter `title` key only (consume; ignore all other keys).
+- Frontmatter `title` and `aliases` keys (consume; ignore all other keys).
 - Internal `.md` -> `.html` link rewrite.
 - Heading anchors (via comrak `header_ids`).
 - Tree-derived nav (directories become sections, alphabetical, `index.md` first).
