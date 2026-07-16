@@ -1,12 +1,14 @@
 use crate::config::SiteConfig;
 use crate::render_page::render_page;
 use anyhow::{anyhow, Result};
+use notify::RecommendedWatcher;
 use notify::{RecursiveMode, Watcher};
 use render_core::site::{build_site, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
+use std::thread::JoinHandle;
 use tiny_http::{Header, Request, Response, Server};
 
 /// The live-reloaded site: url ("cli/tar.html") -> ready-to-send HTML (reload
@@ -217,35 +219,42 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
 /// Watch `docs` and rebuild on change. A burst of editor saves is debounced
 /// into a single rebuild by draining the event channel over a ~200ms quiet
 /// window before rebuilding.
+///
+/// **The caller owns the returned watcher and must keep it alive** — dropping it drops the
+/// notify sender, which ends the rebuild thread. That is the only shutdown path: ownership
+/// lives with the caller so a host running many sites can stop one without leaking its
+/// thread (see `ServeHandle`). `None` means live-reload is disabled (init or watch failed);
+/// serving still works.
 fn spawn_watcher(
     state: Arc<RwLock<ServedSite>>,
     cfg: SiteConfig,
     docs: PathBuf,
     project_dir: PathBuf,
-) {
-    std::thread::spawn(move || {
-        let (tx, rx) = std::sync::mpsc::channel();
-        let mut watcher =
-            match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-                if res.is_ok() {
-                    let _ = tx.send(());
-                }
-            }) {
-                Ok(w) => w,
-                Err(e) => {
-                    eprintln!("file watcher init failed, live-reload disabled: {e}");
-                    return;
-                }
-            };
-        if let Err(e) = watcher.watch(&docs, RecursiveMode::Recursive) {
-            eprintln!(
-                "watching {} failed, live-reload disabled: {e}",
-                docs.display()
-            );
-            return;
-        }
+) -> Option<(RecommendedWatcher, JoinHandle<()>)> {
+    let (tx, rx) = std::sync::mpsc::channel();
+    let mut watcher =
+        match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
+            if res.is_ok() {
+                let _ = tx.send(());
+            }
+        }) {
+            Ok(w) => w,
+            Err(e) => {
+                eprintln!("file watcher init failed, live-reload disabled: {e}");
+                return None;
+            }
+        };
+    if let Err(e) = watcher.watch(&docs, RecursiveMode::Recursive) {
+        eprintln!(
+            "watching {} failed, live-reload disabled: {e}",
+            docs.display()
+        );
+        return None;
+    }
+    let thread = std::thread::spawn(move || {
         loop {
-            // Block until the first event, then drain the quiet window.
+            // Block until the first event, then drain the quiet window. `recv` errors once
+            // the watcher (and with it the sender) is dropped — that is the exit.
             if rx.recv().is_err() {
                 break;
             }
@@ -256,6 +265,7 @@ fn spawn_watcher(
             rebuild_into(&state, &cfg, &docs, &project_dir);
         }
     });
+    Some((watcher, thread))
 }
 
 pub(crate) fn serve_loop(
@@ -306,7 +316,8 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     // asset branch in `handle` needs it too.
     let exclude = cfg.exclude.clone();
 
-    spawn_watcher(
+    // Held until `run_serve` returns: dropping it would silently disable live-reload.
+    let _watcher = spawn_watcher(
         Arc::clone(&state),
         cfg,
         docs.clone(),
@@ -538,6 +549,29 @@ mod tests {
                 s.pages["index.html"]
             );
         }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn dropping_the_watcher_ends_the_rebuild_thread() {
+        // The rebuild thread must terminate when its watcher is dropped. If it doesn't,
+        // a host app that stops a site leaks a thread + an inotify/FSEvents handle per stop.
+        // Failure mode is a hang on join(), not an assert — that is the bug.
+        let tmp = std::env::temp_dir().join(format!("compositor-watcher-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Hi\n").unwrap();
+
+        let cfg = SiteConfig::load(&tmp).unwrap();
+        let docs = cfg.docs_path(&tmp);
+        let (watcher, thread) =
+            spawn_watcher(sample_state(), cfg, docs, tmp.clone()).expect("watcher starts");
+
+        drop(watcher);
+        thread
+            .join()
+            .expect("rebuild thread must exit once its watcher is dropped");
+
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
