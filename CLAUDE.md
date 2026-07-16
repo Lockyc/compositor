@@ -66,12 +66,6 @@ every viewer's browser by polling a `/__reload` epoch endpoint. `serve`'s accept
 limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
 — read it before extending `serve`.
 
-`serve` is exposed two ways: `run_serve` (the blocking CLI path) and
-**`serve_handle`** (non-blocking, returns a `ServeHandle{port}` and shuts down
-on demand) for host apps embedding many sites in one process — one thread per
-site, built from the same `setup`. compositor is consumed as a git dependency
-by **lector**, the docs console.
-
 The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
 (brand, Pagefind search box, light/dark toggle that persists across reload), a left
 tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
@@ -118,13 +112,29 @@ Cargo.toml                      # [workspace] members
 crates/
   render-core/                  # library: Markdown -> HTML, frontmatter, title
                                  # resolution, nav tree, link rewrite -> SiteModel.
-                                 # No CLI/disk assumptions, so `serve` and lector
-                                 # (a Tauri app) reuse it.
-  compositor/                   # CLI crate: config load, Pico-based theme wrap
+                                 # No CLI/disk assumptions, so `serve` and host
+                                 # apps reuse it.
+  compositor/                   # CLI + library: config load, Pico-based theme wrap
                                  # (askama) served via a linked assets/compositor.css
                                  # + assets/compositor.js (no inline stylesheet),
-                                 # write out_dir, invoke Pagefind.
+                                 # write out_dir, invoke Pagefind. Its [lib] target
+                                 # is the embedding surface — see below.
 ```
+
+## The embedding surface (`serve_handle`)
+
+compositor's `[lib]` target is a real public API, not an implementation detail of the binary.
+`serve_handle(project_dir) -> ServeHandle` serves a site on an OS-assigned loopback port and returns
+once bound; `ServeHandle::shutdown()` stops and joins both threads, and `Drop` does the same. It is
+the non-blocking counterpart to `run_serve`, and **both build from the same `setup()`** — that shared
+path is load-bearing: two parallel serve loops would drift, and reimplementing serve in a host app is
+the shadow that this API exists to prevent.
+
+lector (`github.com/lockyc/lector`) is the first consumer: one `ServeHandle` per doc-repo tab. So
+compositor now has a **second build toolchain** — its own `rust-toolchain.toml` standalone, and
+lector's pin when consumed as a git dep (rustup resolves from the dir `cargo` runs in, never from
+`~/.cargo/git/checkouts/`). The two can diverge; lector's build is the drift detector, and the failure
+is loud and local. Do not add a pin here to "fix" that — this repo's pin governs its own gate and CI.
 
 ## Milestone-1 render surface (exhaustive)
 

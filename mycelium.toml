@@ -12,4 +12,8 @@ url     = "https://github.com/Lockyc/compositor"
 
 [[provides]]
 name    = "render-core"
-summary = "Reusable Rust library: Markdown → in-memory site model (frontmatter/title resolution, comrak+syntect render, tree nav, .md→.html link rewrite); embeddable by a future desktop viewer"
+summary = "Reusable Rust library: Markdown → in-memory site model (frontmatter/title resolution, comrak+syntect render, tree nav, .md→.html link rewrite)"
+
+[[provides]]
+name    = "serve-handle"
+summary = "Embedding API: serve_handle() runs a doc repo's live-reloading site on a loopback port and returns once bound, for host apps supervising many sites in one process. The non-blocking counterpart to run_serve, sharing its setup path."

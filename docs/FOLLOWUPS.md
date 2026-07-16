@@ -10,18 +10,18 @@ Not bugs that block use — conscious deferrals.
   `compositor.toml` (e.g. `site_name`) take effect only on restart. Fine for
   content editing; revisit if config becomes something you tune live.
 
-- **A panic while handling a request kills that site's server.** The request
-  loop uses `.expect()` on the state lock. No reachable panic path from
-  external input exists today (the lock's critical sections are panic-free,
-  so it can't poison; the only other `expect` is a static, always-valid
-  header), so this is latent, not live.
-
-  **Severity differs per entry point.** Under `run_serve` (CLI) a panic
-  aborts a process a human is watching. Under `serve_handle` it silently
-  kills one site's serve thread while the host still believes it is live —
-  the host is responsible for noticing a dead thread. Defense-in-depth for
-  the unattended charter: isolate each request (`catch_unwind`) so one bad
-  request can't take a site down.
+- **A panic while handling a request kills that server, silently.** No reachable panic path from
+  external input exists today (the lock's critical sections are panic-free, so it can't poison; the
+  only other `expect` is a static, always-valid header), so this is latent, not live. What changed
+  with `serve_handle` is the *blast radius*, and it now differs per entry point:
+  - **`run_serve` (CLI):** the loop is the main thread — a panic aborts the process. Loud.
+  - **`serve_handle` (embedded):** the loop is one background thread among N. A panic takes down that
+    one site's server while the host still believes it is live. **Silent**, and the host cannot see it
+    without checking.
+  A host embedding this must detect a dead serve thread rather than trust the handle
+  (lector drops its `live` dot on one). Defense-in-depth here: isolate each request (`catch_unwind`).
+  The entry's older suggestion — "move the serve loop off the main thread" — is done for the embedded
+  path and is not the fix for the CLI one.
 
 - **The 404 page carries no live-reload script.** A tab showing a dead link's
   404 will not auto-reload when the missing file is later created (the *linking*
@@ -34,6 +34,8 @@ Not bugs that block use — conscious deferrals.
   synchronously, so a slow-reading client briefly blocks other tabs' reload
   polls. Acceptable ceiling for a local/loopback server; revisit only if `serve`
   is put in front of many concurrent real readers.
+  Under `serve_handle` this is a non-issue by construction: one server per site, not one shared, so a
+  slow reader on one site cannot block another's reload poll.
 
 - **Search is unavailable under `serve`.** `serve` renders in memory and does not
   run Pagefind, so `/pagefind/*` 404s and the top-bar search box stays empty
