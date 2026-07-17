@@ -86,9 +86,8 @@ Not bugs that block use — conscious deferrals.
   as an unresolvable link, even though the file exists. Pre-existing (dates to
   the original M1 link work) and independent of image resolution. The image
   path one function away does handle it: `resolve_image` in the same module
-  splits
-  `#`/`?` off an image url and percent-decodes the remaining path before
-  resolving, and is the model to follow if this is ever fixed. Fixing it would
+  splits `#`/`?` off an image url and percent-decodes the remaining path
+  before resolving, and is the model to follow if this is ever fixed. Fixing it would
   converge the two split sites, at which point a shared `(path, suffix)`
   helper would earn its keep — today they genuinely diverge (`rewrite_link`
   also does `.md`->`.html`), so they're deliberately not collapsed.
