@@ -7,5 +7,5 @@ pub mod site;
 pub mod wikilink;
 
 pub use exclude::Excluder;
-pub use markdown::{LinkPolicy, TocEntry};
+pub use markdown::{DocsAssets, ImageResolution, ImageResolver, LinkPolicy, TocEntry};
 pub use wikilink::{WikiIndex, WikiResolution, WikiTarget};

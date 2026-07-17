@@ -63,6 +63,7 @@ pub fn render_markdown(
     known_urls: &HashSet<String>,
     wiki: &WikiIndex,
     policy: LinkPolicy,
+    images: &dyn ImageResolver,
 ) -> Result<Rendered> {
     let arena = Arena::new();
     let options = comrak_options();
@@ -79,6 +80,7 @@ pub fn render_markdown(
     for node in root.descendants() {
         enum Kind {
             Link(Option<String>),
+            Image(Option<String>),
             Wiki(WikiAction),
             None,
         }
@@ -88,6 +90,7 @@ pub fn render_markdown(
                 NodeValue::Link(link) => {
                     Kind::Link(rewrite_link(&link.url, page_dir, known_urls, policy)?)
                 }
+                NodeValue::Image(img) => Kind::Image(resolve_image(&img.url, page_dir, images)?),
                 NodeValue::WikiLink(wl) => Kind::Wiki(plan_wikilink(
                     &wl.url,
                     &text_of(node),
@@ -103,6 +106,12 @@ pub fn render_markdown(
                 let mut data = node.data.borrow_mut();
                 if let NodeValue::Link(ref mut link) = data.value {
                     link.url = new_url;
+                }
+            }
+            Kind::Image(Some(new_url)) => {
+                let mut data = node.data.borrow_mut();
+                if let NodeValue::Image(ref mut img) = data.value {
+                    img.url = new_url;
                 }
             }
             Kind::Wiki(action) => wl_actions.push((node, action)),
@@ -174,6 +183,89 @@ fn rewrite_link(
         Some(f) => format!("{new_path}#{f}"),
         None => new_path,
     }))
+}
+
+/// What to do with one image url.
+#[derive(Debug)]
+pub enum ImageResolution {
+    /// Leave the url exactly as the author wrote it.
+    Keep,
+    /// Replace the url with this one.
+    Rewrite(String),
+}
+
+/// Resolves a page's relative image urls against whatever asset base that page
+/// is rendered from — the docs tree for a normal page, the repo root for the
+/// README/CLAUDE pages compositor surfaces from outside it (see compositor's
+/// `root_assets`).
+///
+/// The traversal filters external / anchor / root-relative urls out before
+/// calling this, so an implementation only ever sees a genuinely relative url.
+///
+/// Each implementation owns its own strictness: returning `Err` is how an
+/// unresolvable image fails a strict `build`. That is deliberate — a repo-root
+/// page renders its *links* leniently while still resolving its *images*
+/// strictly, so one shared policy argument could not express both.
+pub trait ImageResolver {
+    fn resolve(&self, url: &str, page_dir: &Path) -> Result<ImageResolution>;
+}
+
+/// Validates a docs page's images against the asset set `build_site` collected
+/// while walking the docs tree.
+///
+/// Resolution is validate-only: a docs asset is already mirrored into the output
+/// by compositor's `copy_assets`, so the url the author wrote already resolves
+/// and is kept as-is.
+pub struct DocsAssets {
+    /// Docs-dir-relative, `/`-separated.
+    assets: HashSet<String>,
+    policy: LinkPolicy,
+}
+
+impl DocsAssets {
+    pub fn new(assets: HashSet<String>, policy: LinkPolicy) -> DocsAssets {
+        DocsAssets { assets, policy }
+    }
+}
+
+impl ImageResolver for DocsAssets {
+    fn resolve(&self, url: &str, page_dir: &Path) -> Result<ImageResolution> {
+        let key = normalize(&page_dir.join(url))
+            .to_string_lossy()
+            .replace('\\', "/");
+        if self.assets.contains(&key) {
+            return Ok(ImageResolution::Keep);
+        }
+        match self.policy {
+            LinkPolicy::Strict => Err(anyhow!(
+                "unresolvable image: {url} (from {})",
+                page_dir.display()
+            )),
+            // Lenient: emit the dead src rather than abort an unattended
+            // rebuild. It 404s in the browser — visible, not swallowed.
+            LinkPolicy::Lenient => Ok(ImageResolution::Keep),
+        }
+    }
+}
+
+/// Urls the resolver never sees: absolute, protocol-relative, `data:`, anchors,
+/// site-root-relative, and empty. These are not compositor's to resolve.
+fn is_external_image_url(url: &str) -> bool {
+    url.is_empty()
+        || url.starts_with('#')
+        || url.starts_with('/')
+        || url.starts_with("data:")
+        || url.contains("://")
+}
+
+fn resolve_image(url: &str, page_dir: &Path, images: &dyn ImageResolver) -> Result<Option<String>> {
+    if is_external_image_url(url) {
+        return Ok(None);
+    }
+    match images.resolve(url, page_dir)? {
+        ImageResolution::Keep => Ok(None),
+        ImageResolution::Rewrite(u) => Ok(Some(u)),
+    }
 }
 
 /// The planned replacement for one `[[wikilink]]` node.
@@ -370,6 +462,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(r.html.contains("<table>"));
@@ -383,6 +476,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         // syntect emits inline styles on a <pre>/<code> span structure
@@ -397,6 +491,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert_eq!(r.first_h1.as_deref(), Some("Title Here"));
@@ -410,6 +505,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(r.first_h1.is_none());
@@ -423,6 +519,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert_eq!(
@@ -439,6 +536,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         let levels: Vec<u8> = r.toc.iter().map(|t| t.level).collect();
@@ -455,6 +553,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         let id = &r.toc[0].id;
@@ -478,6 +577,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         let ids: Vec<&str> = r.toc.iter().map(|t| t.id.as_str()).collect();
@@ -493,6 +593,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(r.toc.is_empty());
@@ -507,6 +608,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -527,6 +629,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -545,6 +648,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -564,6 +668,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -581,6 +686,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap_err();
         assert!(err.to_string().contains("No Such Page"), "got: {err}");
@@ -594,6 +700,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Lenient,
+            &no_images(),
         )
         .unwrap();
         // Neutered anchor keeps the data-wikilink attribute and has no valid href.
@@ -630,6 +737,7 @@ mod tests {
             &HashSet::new(),
             &w,
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap_err();
         assert!(
@@ -644,6 +752,7 @@ mod tests {
             &HashSet::new(),
             &w,
             LinkPolicy::Lenient,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -661,6 +770,7 @@ mod tests {
             &HashSet::new(),
             &wiki_fixture(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         // Comrak does not parse wikilinks inside code spans, so it stays literal text.
@@ -677,6 +787,7 @@ mod tests {
             &known,
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -697,6 +808,7 @@ mod tests {
             &known,
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -715,6 +827,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert_eq!(r.toc.len(), 1);
@@ -733,6 +846,7 @@ mod tests {
             &HashSet::new(),
             &WikiIndex::new(),
             LinkPolicy::Strict,
+            &no_images(),
         )
         .unwrap();
         assert!(
@@ -746,5 +860,104 @@ mod tests {
             "{}",
             r.html
         );
+    }
+
+    fn no_images() -> DocsAssets {
+        DocsAssets::new(HashSet::new(), LinkPolicy::Lenient)
+    }
+
+    fn docs_assets(paths: &[&str], policy: LinkPolicy) -> DocsAssets {
+        DocsAssets::new(paths.iter().map(|s| s.to_string()).collect(), policy)
+    }
+
+    #[test]
+    fn image_in_docs_assets_is_left_alone() {
+        let images = docs_assets(&["img/shot.png"], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![a](img/shot.png)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        assert!(r.html.contains(r#"src="img/shot.png""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn image_resolves_relative_to_the_page_dir() {
+        // A page at sub/page.md writing "img/shot.png" means sub/img/shot.png.
+        let images = docs_assets(&["sub/img/shot.png"], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![a](img/shot.png)",
+            Path::new("sub"),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        // The emitted src stays relative to the page, as rewrite_link does for links.
+        assert!(r.html.contains(r#"src="img/shot.png""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn missing_image_errors_under_strict() {
+        let images = docs_assets(&[], LinkPolicy::Strict);
+        let err = render_markdown(
+            "![a](img/gone.png)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("img/gone.png"), "got: {err}");
+    }
+
+    #[test]
+    fn missing_image_degrades_under_lenient() {
+        let images = docs_assets(&[], LinkPolicy::Lenient);
+        let r = render_markdown(
+            "![a](img/gone.png)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &images,
+        )
+        .unwrap();
+        assert!(r.html.contains(r#"src="img/gone.png""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn external_and_root_relative_images_are_never_validated() {
+        // Badges in a README are absolute; a strict resolver with an empty asset set
+        // must not touch or reject them.
+        let images = docs_assets(&[], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![c](https://img.shields.io/badge/x.svg)\n\n![d](data:image/png;base64,AA)\n\n![e](//cdn/x.png)\n\n![f](/root.png)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        assert!(
+            r.html
+                .contains(r#"src="https://img.shields.io/badge/x.svg""#),
+            "got: {}",
+            r.html
+        );
+        assert!(
+            r.html.contains(r#"src="data:image/png;base64,AA""#),
+            "got: {}",
+            r.html
+        );
+        assert!(r.html.contains(r#"src="//cdn/x.png""#), "got: {}", r.html);
+        assert!(r.html.contains(r#"src="/root.png""#), "got: {}", r.html);
     }
 }

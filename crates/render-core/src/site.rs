@@ -49,11 +49,21 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy, excluder: &Excluder) -> R
     // carry each page's display title. Excluded paths are skipped.
     let mut raws = Vec::new(); // (rel, page_dir, url, title, body)
     let mut known_urls = std::collections::HashSet::new();
+    let mut assets = std::collections::HashSet::new();
     let mut wiki = WikiIndex::new();
     for entry in WalkDir::new(docs_dir).sort_by_file_name() {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {
+            // Non-Markdown files are the site's assets. Collect them (same
+            // Excluder as the pages) so images can be validated in pass 2;
+            // compositor's `copy_assets` is what actually mirrors them out.
+            if entry.file_type().is_file() {
+                let rel = path.strip_prefix(docs_dir)?;
+                if !excluder.is_excluded(rel) {
+                    assets.insert(rel.to_string_lossy().replace('\\', "/"));
+                }
+            }
             continue;
         }
         let rel = path.strip_prefix(docs_dir)?.to_path_buf();
@@ -78,10 +88,11 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy, excluder: &Excluder) -> R
         wiki.add_page(&url, &title, &rel, &stem, &fm.aliases);
         raws.push((rel, page_dir, url, title, body));
     }
-    // Pass 2: render (md links and wikilinks now resolvable).
+    // Pass 2: render (md links, wikilinks, and images now resolvable).
+    let images = crate::markdown::DocsAssets::new(assets, policy);
     let mut pages = Vec::new();
     for (rel, page_dir, url, title, body) in raws {
-        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy)?;
+        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy, &images)?;
         pages.push(Page {
             url,
             rel_path: rel,

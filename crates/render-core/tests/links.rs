@@ -1,10 +1,14 @@
-use render_core::markdown::{render_markdown, LinkPolicy};
+use render_core::markdown::{render_markdown, DocsAssets, LinkPolicy};
 use render_core::wikilink::WikiIndex;
 use std::collections::HashSet;
 use std::path::Path;
 
 fn urls(list: &[&str]) -> HashSet<String> {
     list.iter().map(|s| s.to_string()).collect()
+}
+
+fn no_images() -> DocsAssets {
+    DocsAssets::new(std::collections::HashSet::new(), LinkPolicy::Lenient)
 }
 
 #[test]
@@ -16,6 +20,7 @@ fn rewrites_relative_md_link_to_html() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"tar.html\""));
@@ -30,6 +35,7 @@ fn leaves_external_links_untouched() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"https://example.com\""));
@@ -44,6 +50,7 @@ fn errors_on_unresolvable_internal_link() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     );
     assert!(err.is_err());
 }
@@ -59,6 +66,7 @@ fn lenient_policy_renders_unresolvable_link_as_broken_html() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Lenient,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"missing.html\""));
@@ -77,6 +85,7 @@ fn rewrites_dotdot_relative_link_using_original_relative_path() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"../other.html\""));
@@ -97,6 +106,7 @@ fn only_the_trailing_md_extension_is_swapped_not_earlier_occurrences() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"notes.md.html\""));
@@ -111,6 +121,7 @@ fn preserves_anchor_fragment_on_rewritten_link() {
         &known,
         &WikiIndex::new(),
         LinkPolicy::Strict,
+        &no_images(),
     )
     .unwrap();
     assert!(r.html.contains("href=\"tar.html#sec\""));
