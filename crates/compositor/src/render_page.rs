@@ -268,10 +268,7 @@ fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
 
 /// Surface a **repo-root `CLAUDE.md`** as a top-level nav page (label `CLAUDE`),
 /// adjacent to Home. The sibling of the repo-root README handling (`resolve_home`
-/// tier 3), but as a *nav entry* rather than the home page. Like the README it lives
-/// outside the docs link contract, so it renders leniently against an empty url/wiki
-/// base — its cross-tree links get the `.md`→`.html` rewrite and degrade to honest
-/// 404s rather than hard-failing a strict `build`.
+/// tier 3), but as a *nav entry* rather than the home page.
 ///
 /// A no-op unless the docs dir is a *subdir* (when it *is* the repo root, a `CLAUDE.md`
 /// there is already an ordinary docs page in the nav), there is a repo-root `CLAUDE.md`

@@ -397,4 +397,31 @@ mod tests {
         );
         std::fs::remove_dir_all(&tmp).ok();
     }
+
+    #[test]
+    fn docs_asset_wins_a_url_collision_with_a_repo_root_asset() {
+        // Global constraint (see `copy_root_assets`'s doc comment): docs content
+        // always wins when a repo-root README/CLAUDE image and a real docs asset
+        // land on the same site url. Nothing else guards this — `copy_root_assets`
+        // running after `copy_assets` and skipping an existing destination is the
+        // whole mechanism, and a future refactor could silently invert it.
+        let tmp = scratch("root-img-collision");
+        std::fs::create_dir_all(tmp.join("images")).unwrap();
+        std::fs::write(tmp.join("images/logo.png"), "OUTSIDE").unwrap();
+        std::fs::create_dir_all(tmp.join("docs/images")).unwrap();
+        std::fs::write(tmp.join("docs/images/logo.png"), "DOCS").unwrap();
+        std::fs::write(tmp.join("README.md"), "# P\n\n![logo](images/logo.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let got = std::fs::read_to_string(tmp.join("site/images/logo.png")).unwrap();
+        assert_eq!(got, "DOCS", "docs content must win the url collision");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

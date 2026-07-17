@@ -735,6 +735,55 @@ mod tests {
     }
 
     #[test]
+    fn on_demand_docs_asset_wins_a_root_asset_url_collision() {
+        // Same global constraint as `build.rs`'s
+        // `docs_asset_wins_a_url_collision_with_a_repo_root_asset`, over HTTP:
+        // when a docs-dir file and a `root_assets` entry (a repo-root README/CLAUDE
+        // image) claim the same site url, docs wins. The whole mechanism here is
+        // `handle`'s on-demand docs branch running — and returning — before the
+        // `root_assets` branch; reorder those two and this test must catch it.
+        let tmp =
+            std::env::temp_dir().join(format!("compositor-serve-collision-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("images")).unwrap();
+        std::fs::write(tmp.join("images/logo.png"), "DOCS").unwrap();
+
+        let outside = std::env::temp_dir().join(format!(
+            "compositor-serve-collision-outside-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&outside);
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(outside.join("logo.png"), "OUTSIDE").unwrap();
+
+        let mut root_assets = HashMap::new();
+        root_assets.insert("images/logo.png".to_string(), outside.join("logo.png"));
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &tmp, &[])),
+            root_assets,
+        }));
+
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs_for_thread = tmp.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
+
+        let resp = get(addr, "/images/logo.png");
+        assert!(resp.contains("200 OK"), "resp: {resp}");
+        assert!(
+            resp.contains("DOCS"),
+            "on-disk docs content must win: {resp}"
+        );
+        assert!(!resp.contains("OUTSIDE"), "resp: {resp}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::remove_dir_all(&outside).ok();
+    }
+
+    #[test]
     fn rebuild_bumps_epoch_and_swaps_content() {
         let tmp = std::env::temp_dir().join(format!("compositor-serve-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&tmp);

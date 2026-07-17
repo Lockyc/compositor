@@ -55,6 +55,12 @@ no `compositor.toml` and no special files to work:
   outside-the-docs-contract rendering, but a nav page rather than the landing. Only
   when the docs dir is a subdir (a docs-tree `CLAUDE.md` is already a normal page).
   (See `render_page::surface_repo_claude`.)
+- **Images a repo-root README.md/CLAUDE.md references** resolve against the **repo
+  root** (what those urls are actually relative to): one landing inside the docs
+  dir is rewritten to its docs url, one outside is copied into the site mirroring
+  its repo-relative path — referenced files only, never a wholesale copy of the
+  repo. Docs content wins a url collision, and the `Excluder` still applies. (See
+  `root_assets::RootAssets`.)
 - **A broken internal link** → degrades to a 404 under `serve`, never a halt (below).
 
 The Markdown author writes content; compositor supplies everything around it. When a
@@ -75,6 +81,12 @@ halt or swallow updates**. This splits the two commands' failure policy:
   always succeeds, and the freshest render always swaps in. A single broken link
   must never freeze the site at a last-good revision and silently swallow every
   later edit — the worst failure mode for a process no one is monitoring.
+
+An unresolvable **image** is treated the same as an unresolvable link: a hard
+error under `build`, an honest 404 under `--lenient` and `serve`. This holds on
+the repo-root README/CLAUDE pages too, whose *links* stay lenient (they sit
+outside the docs link contract) but whose *images* either exist on disk under
+the repo root or don't. (See `markdown::ImageResolver`.)
 
 ## Current state
 
@@ -180,7 +192,9 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
 - Title resolution: `frontmatter.title` -> first `# H1` -> humanized filename.
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
-  references resolve in the built site — as MkDocs does.
+  references resolve in the built site — as MkDocs does. Assets a repo-root
+  README/CLAUDE page references from outside the docs dir are copied too, on
+  reference (see Purpose).
 - Server-side per-page TOC (h2/h3) with scroll-spy.
 
 Explicitly **not** in Milestone 1: host rollout (M5).

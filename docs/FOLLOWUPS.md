@@ -18,6 +18,16 @@ Not bugs that block use — conscious deferrals.
   the rules. Revisit by watching the collected `.gitignore` paths alongside the
   docs dir.
 
+- **A repo-root image added after startup 404s until an unrelated docs edit
+  triggers a rebuild.** The watcher watches only the docs dir, but a repo-root
+  README/CLAUDE page's image can sit outside it (see `root_assets::RootAssets`).
+  `serve`'s lenient policy renders a not-yet-existing one as an honest 404 at
+  the moment it's referenced, and nothing outside the docs dir triggers the
+  rebuild that would pick it up once the file lands — same family as the
+  `compositor.toml` and `.gitignore` entries above. Correct-by-design (honest
+  404, not a stale freeze; the next docs-triggered rebuild resolves it), not a
+  bug. Revisit alongside those two if repo-root assets ever need their own watch.
+
 - **A panic while handling a request kills that server, silently.** No reachable panic path from
   external input exists today (the lock's critical sections are panic-free, so it can't poison; the
   only other `expect`s are two static, always-valid headers), so this is latent, not live. What
