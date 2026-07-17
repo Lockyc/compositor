@@ -21,6 +21,10 @@ pub(crate) struct ServedSite {
     pub(crate) pages: HashMap<String, String>,
     pub(crate) epoch: u64,
     pub(crate) excluder: Arc<Excluder>,
+    /// site url -> source file, for images the repo-root pages reference from
+    /// outside the docs tree. `handle` cannot find these under `docs`, and
+    /// rebuilding it alongside `pages` is what keeps the two from drifting.
+    pub(crate) root_assets: HashMap<String, PathBuf>,
 }
 
 /// The client script, baselined at the epoch the page was built at (not the
@@ -57,13 +61,20 @@ pub(crate) fn build_pages(
     site: &mut SiteModel,
     project_dir: &Path,
     epoch: u64,
-) -> HashMap<String, String> {
+    excluder: &Excluder,
+) -> Result<(HashMap<String, String>, HashMap<String, PathBuf>)> {
+    let docs = cfg.docs_path(project_dir);
+    // Always lenient: `serve` must never halt an unattended rebuild, so a dead
+    // image degrades to a 404 exactly as a dead link does.
+    let images =
+        crate::root_assets::RootAssets::new(project_dir, &docs, excluder, LinkPolicy::Lenient);
     // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
-    crate::render_page::surface_repo_claude(site, cfg, project_dir);
+    crate::render_page::surface_repo_claude(site, cfg, project_dir, &images)?;
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(site, cfg, project_dir);
+    let home = crate::render_page::resolve_home(site, cfg, project_dir, &images)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
-    site.pages
+    let pages = site
+        .pages
         .iter()
         .chain(home.as_ref())
         .map(|p| {
@@ -73,7 +84,8 @@ pub(crate) fn build_pages(
                 inject_reload(&render_page(cfg, &site.nav, p, prev, next), epoch),
             )
         })
-        .collect()
+        .collect();
+    Ok((pages, images.copies().into_iter().collect()))
 }
 
 /// Map a request path to a site url: "" / "/" -> index.html, trailing "/" ->
@@ -189,6 +201,22 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
         }
     }
 
+    // An image a repo-root README/CLAUDE.md referenced from outside the docs
+    // tree. Only resolved, non-excluded files are ever in this map (see
+    // `RootAssets`), so serving from it is safe by construction.
+    let root_src = state
+        .read()
+        .expect("state lock")
+        .root_assets
+        .get(&url)
+        .cloned();
+    if let Some(src) = root_src {
+        if let Ok(bytes) = std::fs::read(&src) {
+            respond(req, 200, content_type(&url), bytes);
+            return;
+        }
+    }
+
     respond(
         req,
         404,
@@ -217,11 +245,16 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
     match build_site(docs, LinkPolicy::Lenient, &excluder) {
         Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
-            let pages = build_pages(cfg, &mut site, project_dir, next_epoch);
-            let mut s = state.write().expect("state lock");
-            s.pages = pages;
-            s.epoch = next_epoch;
-            s.excluder = excluder;
+            match build_pages(cfg, &mut site, project_dir, next_epoch, &excluder) {
+                Ok((pages, root_assets)) => {
+                    let mut s = state.write().expect("state lock");
+                    s.pages = pages;
+                    s.epoch = next_epoch;
+                    s.excluder = excluder;
+                    s.root_assets = root_assets;
+                }
+                Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
+            }
         }
         Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
     }
@@ -331,10 +364,12 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
     }
 
     let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder)?;
+    let (pages, root_assets) = build_pages(&cfg, &mut site, project_dir, 0, &excluder)?;
     let state = Arc::new(RwLock::new(ServedSite {
-        pages: build_pages(&cfg, &mut site, project_dir, 0),
+        pages,
         epoch: 0,
         excluder,
+        root_assets,
     }));
 
     let watcher = spawn_watcher(
@@ -551,6 +586,7 @@ mod tests {
             pages,
             epoch: 0,
             excluder: Arc::new(excluder),
+            root_assets: HashMap::new(),
         }))
     }
 
@@ -713,10 +749,12 @@ mod tests {
         };
         let excluder = Arc::new(Excluder::new(&tmp, &docs, &[]));
         let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder).unwrap();
+        let (pages, root_assets) = build_pages(&cfg, &mut site, &tmp, 0, &excluder).unwrap();
         let state = RwLock::new(ServedSite {
-            pages: build_pages(&cfg, &mut site, &tmp, 0),
+            pages,
             epoch: 0,
             excluder,
+            root_assets,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
@@ -853,6 +891,38 @@ mod tests {
         };
         assert!(rebound.is_some(), "port {port} still bound after shutdown");
 
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn serve_serves_a_repo_root_readme_asset() {
+        let tmp =
+            std::env::temp_dir().join(format!("compositor-serve-root-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::create_dir_all(tmp.join("images")).unwrap();
+        std::fs::write(tmp.join("images/logo.png"), "PNGDATA").unwrap();
+        std::fs::write(tmp.join("README.md"), "# P\n\n![logo](images/logo.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        let h = serve_handle(&tmp).expect("serve_handle binds");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], h.port));
+
+        let home = get(addr, "/");
+        assert!(home.contains(r#"src="images/logo.png""#), "home: {home}");
+
+        // The asset lives outside the docs dir, so the docs on-demand branch can
+        // never find it — it must come from the recorded root-asset map.
+        let img = get(addr, "/images/logo.png");
+        assert!(img.contains("200 OK"), "img resp: {img}");
+        assert!(img.contains("PNGDATA"), "img resp: {img}");
+
+        h.shutdown();
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

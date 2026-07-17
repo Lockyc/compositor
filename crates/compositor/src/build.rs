@@ -3,7 +3,7 @@ use crate::render_page::render_page;
 use anyhow::{anyhow, Context, Result};
 use render_core::site::build_site;
 use render_core::{Excluder, LinkPolicy};
-use std::path::{Component, Path};
+use std::path::{Component, Path, PathBuf};
 use walkdir::WalkDir;
 
 pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
@@ -20,11 +20,14 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     }
 
     let mut site = build_site(&docs, policy, &excluder)?;
+    // The two pages compositor renders from outside the docs tree resolve their
+    // images against the repo root; `images` records what must be copied.
+    let images = crate::root_assets::RootAssets::new(project_dir, &docs, &excluder, policy);
     // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
-    crate::render_page::surface_repo_claude(&mut site, &cfg, project_dir);
+    crate::render_page::surface_repo_claude(&mut site, &cfg, project_dir, &images)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(&site, &cfg, project_dir);
+    let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
     for page in site.pages.iter().chain(home.as_ref()) {
         let (prev, next) = crate::render_page::neighbours(&order, &page.url);
@@ -36,6 +39,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
         std::fs::write(&dest, html)?;
     }
     copy_assets(&docs, &out, &excluder)?;
+    copy_root_assets(&out, &images.copies())?;
     write_shell_assets(&out)?;
 
     println!("built {} pages -> {}", site.pages.len(), out.display());
@@ -104,6 +108,30 @@ fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
             std::fs::create_dir_all(parent)?;
         }
         std::fs::copy(path, &dest).with_context(|| format!("copying asset {}", path.display()))?;
+    }
+    Ok(())
+}
+
+/// Copy the outside-docs assets the repo-root pages actually referenced,
+/// mirroring each one's repo-relative path so the url the author wrote resolves.
+///
+/// Runs *after* `copy_assets`, and skips a destination that already exists: the
+/// docs tree is the primary source, so docs content wins a url collision.
+/// `write_shell_assets` runs after both and wins over either, as before.
+fn copy_root_assets(
+    out: &Path,
+    copies: &std::collections::BTreeMap<String, PathBuf>,
+) -> Result<()> {
+    for (url, src) in copies {
+        let dest = out.join(url);
+        if dest.exists() {
+            continue;
+        }
+        if let Some(parent) = dest.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        std::fs::copy(src, &dest)
+            .with_context(|| format!("copying root asset {}", src.display()))?;
     }
     Ok(())
 }
@@ -214,6 +242,158 @@ mod tests {
         assert!(
             tmp.join("site/index.html").exists(),
             "kept page must render"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_readme_image_outside_docs_is_copied_and_resolves() {
+        // The reported bug: the home page is promoted from a repo-root README whose
+        // image sits outside the docs tree, so nothing ever copied it.
+        let tmp = scratch("root-img");
+        std::fs::create_dir_all(tmp.join("images")).unwrap();
+        std::fs::write(tmp.join("images/logo.png"), "PNG").unwrap();
+        std::fs::write(tmp.join("README.md"), "# P\n\n![logo](images/logo.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(home.contains(r#"src="images/logo.png""#), "home: {home}");
+        assert!(
+            tmp.join("site/images/logo.png").exists(),
+            "the referenced root asset must be copied into the site"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_readme_image_inside_docs_is_rewritten_not_duplicated() {
+        let tmp = scratch("root-img-indocs");
+        std::fs::create_dir_all(tmp.join("docs/images")).unwrap();
+        std::fs::write(tmp.join("docs/images/logo.png"), "PNG").unwrap();
+        std::fs::write(
+            tmp.join("README.md"),
+            "# P\n\n![logo](docs/images/logo.png)\n",
+        )
+        .unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(home.contains(r#"src="images/logo.png""#), "home: {home}");
+        assert!(tmp.join("site/images/logo.png").exists());
+        assert!(
+            !tmp.join("site/docs/images/logo.png").exists(),
+            "an in-docs asset must not be copied a second time under its repo path"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_claude_image_is_copied_too() {
+        let tmp = scratch("root-img-claude");
+        std::fs::create_dir_all(tmp.join("images")).unwrap();
+        std::fs::write(tmp.join("images/d.png"), "PNG").unwrap();
+        std::fs::write(tmp.join("CLAUDE.md"), "# Notes\n\n![d](images/d.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let page = std::fs::read_to_string(tmp.join("site/CLAUDE.html")).unwrap();
+        assert!(page.contains(r#"src="images/d.png""#), "page: {page}");
+        assert!(tmp.join("site/images/d.png").exists());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn gitignored_root_image_is_never_copied() {
+        let tmp = scratch("root-img-gi");
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.join("scratch")).unwrap();
+        std::fs::write(tmp.join(".gitignore"), "scratch/\n").unwrap();
+        std::fs::write(tmp.join("scratch/secret.png"), "PNG").unwrap();
+        std::fs::write(tmp.join("README.md"), "# P\n\n![s](scratch/secret.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        // Lenient: a gitignored image is "unresolvable", which strict would reject.
+        run_build(&tmp, LinkPolicy::Lenient).unwrap();
+
+        assert!(
+            !tmp.join("site/scratch/secret.png").exists(),
+            "a gitignored file must never reach the site"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn dead_root_readme_image_fails_strict_but_survives_lenient() {
+        let tmp = scratch("root-img-dead");
+        std::fs::write(tmp.join("README.md"), "# P\n\n![gone](images/gone.png)\n").unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        let strict = run_build(&tmp, LinkPolicy::Strict);
+        assert!(
+            strict.is_err(),
+            "a dead README image must fail a strict build"
+        );
+        assert!(
+            strict.unwrap_err().to_string().contains("images/gone.png"),
+            "the error must name the image"
+        );
+
+        run_build(&tmp, LinkPolicy::Lenient).unwrap();
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(home.contains(r#"src="images/gone.png""#), "home: {home}");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn readme_badge_urls_survive_a_strict_build() {
+        // compositor's own README is badge-only; absolute urls are not ours to resolve.
+        let tmp = scratch("root-img-badge");
+        std::fs::write(
+            tmp.join("README.md"),
+            "# P\n\n![CI](https://example.com/b.svg)\n",
+        )
+        .unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(
+            home.contains(r#"src="https://example.com/b.svg""#),
+            "home: {home}"
         );
         std::fs::remove_dir_all(&tmp).ok();
     }

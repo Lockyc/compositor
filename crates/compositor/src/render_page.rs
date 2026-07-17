@@ -1,7 +1,8 @@
 use crate::config::SiteConfig;
+use anyhow::Result;
 use askama::Template;
 use render_core::frontmatter::split_frontmatter;
-use render_core::markdown::{render_markdown, TocEntry};
+use render_core::markdown::{render_markdown, ImageResolver, TocEntry};
 use render_core::nav::{flatten, NavLink, NavNode, NavTree};
 use render_core::site::{Page, SiteModel};
 use render_core::LinkPolicy;
@@ -165,67 +166,87 @@ fn toc_to_html(toc: &[TocEntry]) -> String {
 /// 4. otherwise a **generated index** — the site name over the nav as a link list
 ///    — so `/` is never a blank body.
 ///
-/// The repo README (tier 3) is rendered with the *lenient* link policy: it is
-/// landing chrome sourced from outside the docs tree, so its links don't share
-/// the docs tree's url base and must not be validated against it (nor hard-fail a
-/// strict `build`).
+/// The repo README (tier 3) is rendered with the *lenient* link policy for its
+/// `.md` links: it is landing chrome sourced from outside the docs tree, so its
+/// links don't share the docs tree's url base and must not be validated against
+/// it (nor hard-fail a strict `build`). Its **images** are a different matter —
+/// `images` carries the build's real policy, so an unresolvable one still fails
+/// a strict `build` rather than shipping a silently broken `<img>`.
 ///
 /// Returned (when `Some`) as an extra page for callers to render alongside the
 /// real pages; it is intentionally not part of the nav tree.
-pub fn resolve_home(site: &SiteModel, cfg: &SiteConfig, project_dir: &Path) -> Option<Page> {
+pub fn resolve_home(
+    site: &SiteModel,
+    cfg: &SiteConfig,
+    project_dir: &Path,
+    images: &dyn ImageResolver,
+) -> Result<Option<Page>> {
     if site.pages.iter().any(|p| p.url == "index.html") {
-        return None;
+        return Ok(None);
     }
     for stem in ["index", "home", "readme"] {
         if let Some(src) = site.pages.iter().find(|p| is_root_named(p, stem)) {
-            return Some(Page {
+            return Ok(Some(Page {
                 url: "index.html".to_string(),
                 rel_path: PathBuf::from("index.md"),
                 title: src.title.clone(),
                 html: src.html.clone(),
                 toc: src.toc.clone(),
-            });
+            }));
         }
     }
     // Tier 3 only applies when the docs dir is a subdir: when it *is* the repo
     // root (a bare Markdown folder), a root README is already a docs page and
     // was handled by the promotion loop above.
     if cfg.docs_path(project_dir) != project_dir {
-        if let Some(home) = repo_readme_home(project_dir, &cfg.site_name) {
-            return Some(home);
+        if let Some(home) = repo_readme_home(project_dir, &cfg.site_name, images)? {
+            return Ok(Some(home));
         }
     }
-    Some(generated_index(&cfg.site_name, &site.nav))
+    Ok(Some(generated_index(&cfg.site_name, &site.nav)))
 }
 
 /// Render the repo-root `README.md` (filename matched case-insensitively) into a
-/// home page, or `None` if there is no README to read/render.
-fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
-    let path = find_repo_root_md(project_dir, "readme")?;
-    let raw = std::fs::read_to_string(&path).ok()?;
+/// home page. `Ok(None)` when there is no README to read — the graceful default.
+/// An `Err` means the README exists but did not render (e.g. an unresolvable
+/// image under a strict `build`), which must surface rather than silently fall
+/// through to the generated index.
+fn repo_readme_home(
+    project_dir: &Path,
+    site_name: &str,
+    images: &dyn ImageResolver,
+) -> Result<Option<Page>> {
+    let Some(path) = find_repo_root_md(project_dir, "readme") else {
+        return Ok(None);
+    };
+    let Ok(raw) = std::fs::read_to_string(&path) else {
+        return Ok(None);
+    };
     let (fm, body) = split_frontmatter(&raw);
-    // Empty known-urls + lenient: the README is not part of the strict docs link
-    // contract, and its link base differs from the docs tree's.
+    // Empty known-urls + lenient *links*: the README is not part of the strict
+    // docs link contract, and its link base differs from the docs tree's. Its
+    // *images* are a different matter — they resolve against the repo root and
+    // either exist on disk or don't, so `images` carries the build's real
+    // policy and a dead one still fails a strict build.
     let rendered = render_markdown(
         &body,
         Path::new(""),
         &HashSet::new(),
         &render_core::wikilink::WikiIndex::new(),
         LinkPolicy::Lenient,
-        &render_core::DocsAssets::new(HashSet::new(), LinkPolicy::Lenient),
-    )
-    .ok()?;
+        images,
+    )?;
     let title = fm
         .title
         .or(rendered.first_h1)
         .unwrap_or_else(|| site_name.to_string());
-    Some(Page {
+    Ok(Some(Page {
         url: "index.html".to_string(),
         rel_path: PathBuf::from("index.md"),
         title,
         html: rendered.html,
         toc: rendered.toc,
-    })
+    }))
 }
 
 /// A top-level `*.md` file in `dir` whose stem equals `stem` (case-insensitive) —
@@ -260,33 +281,41 @@ fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
 /// The label is the fixed stem `CLAUDE`, never content-derived: these files
 /// conventionally open with a `# <projectname>` H1, which the normal title chain
 /// would wrongly surface as the menu label.
-pub fn surface_repo_claude(site: &mut SiteModel, cfg: &SiteConfig, project_dir: &Path) {
+///
+/// Like the README, its `.md` links render leniently against an empty url/wiki
+/// base — outside the docs link contract, so they degrade to honest 404s rather
+/// than hard-failing a strict `build`. Its images follow `images`, the build's
+/// real policy, so a dead one still fails a strict build instead of vanishing.
+pub fn surface_repo_claude(
+    site: &mut SiteModel,
+    cfg: &SiteConfig,
+    project_dir: &Path,
+    images: &dyn ImageResolver,
+) -> Result<()> {
     const URL: &str = "CLAUDE.html";
     // Docs dir *is* the repo root → a root CLAUDE.md is already a docs page.
     if cfg.docs_path(project_dir) == project_dir {
-        return;
+        return Ok(());
     }
     // Already surfaced (e.g. a docs-tree CLAUDE.md) → no duplicate entry.
     if site.pages.iter().any(|p| p.url == URL) {
-        return;
+        return Ok(());
     }
     let Some(path) = find_repo_root_md(project_dir, "claude") else {
-        return;
+        return Ok(());
     };
     let Ok(raw) = std::fs::read_to_string(&path) else {
-        return;
+        return Ok(());
     };
     let (_fm, body) = split_frontmatter(&raw);
-    let Ok(rendered) = render_markdown(
+    let rendered = render_markdown(
         &body,
         Path::new(""),
         &HashSet::new(),
         &render_core::wikilink::WikiIndex::new(),
         LinkPolicy::Lenient,
-        &render_core::DocsAssets::new(HashSet::new(), LinkPolicy::Lenient),
-    ) else {
-        return;
-    };
+        images,
+    )?;
     site.pages.push(Page {
         url: URL.to_string(),
         rel_path: PathBuf::from("CLAUDE.md"),
@@ -307,6 +336,7 @@ pub fn surface_repo_claude(site: &mut SiteModel, cfg: &SiteConfig, project_dir: 
             url: URL.to_string(),
         },
     );
+    Ok(())
 }
 
 /// A generated landing page for a docs tree with no authored home: the site name
@@ -442,17 +472,29 @@ mod tests {
         p
     }
 
+    /// A permissive resolver for tests not concerned with image handling —
+    /// nothing under it is ever expected to render an `<img>`.
+    fn no_images() -> render_core::DocsAssets {
+        render_core::DocsAssets::new(HashSet::new(), LinkPolicy::Lenient)
+    }
+
     #[test]
     fn no_home_added_when_index_exists() {
         let s = site(vec![page("index.md", "index.html", "x")]);
         // Short-circuits before touching the filesystem, so any path works.
-        assert!(resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent")).is_none());
+        assert!(
+            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
+                .unwrap()
+                .is_none()
+        );
     }
 
     #[test]
     fn docs_tree_readme_is_promoted_to_home_any_case() {
         let s = site(vec![page("README.md", "README.html", "readme body")]);
-        let home = resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent")).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
+            .unwrap()
+            .unwrap();
         assert_eq!(home.url, "index.html");
         assert_eq!(home.html, "readme body");
     }
@@ -464,7 +506,8 @@ mod tests {
             page("home.md", "home.html", "H"),
         ]);
         assert_eq!(
-            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"))
+            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
+                .unwrap()
                 .unwrap()
                 .html,
             "H"
@@ -476,7 +519,9 @@ mod tests {
         let tmp = scratch("repo-readme");
         std::fs::write(tmp.join("README.md"), "# Welcome\n\nhello world").unwrap();
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+            .unwrap()
+            .unwrap();
         assert_eq!(home.url, "index.html");
         assert_eq!(home.title, "Welcome");
         assert!(home.html.contains("hello world"));
@@ -488,7 +533,9 @@ mod tests {
         let tmp = scratch("repo-readme-case");
         std::fs::write(tmp.join("readme.md"), "# Casing\n\nbody").unwrap();
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+            .unwrap()
+            .unwrap();
         assert_eq!(home.title, "Casing");
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -499,7 +546,9 @@ mod tests {
         let tmp = scratch("docs-beats-repo");
         std::fs::write(tmp.join("README.md"), "# Repo\n\nrepo body").unwrap();
         let s = site(vec![page("home.md", "home.html", "docs home body")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+            .unwrap()
+            .unwrap();
         assert_eq!(home.html, "docs home body");
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -509,7 +558,9 @@ mod tests {
         // No docs landing and no repo-root README -> a generated index, not blank.
         let tmp = scratch("gen-index");
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("My Site"), &tmp).unwrap();
+        let home = resolve_home(&s, &cfg_named("My Site"), &tmp, &no_images())
+            .unwrap()
+            .unwrap();
         assert_eq!(home.url, "index.html");
         assert_eq!(home.title, "My Site");
         assert!(home.html.contains("<h1>My Site</h1>"));
@@ -522,7 +573,9 @@ mod tests {
         // repo-root README either, the home is the generated index.
         let tmp = scratch("nested-readme");
         let s = site(vec![page("sub/readme.md", "sub/readme.html", "R")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp).unwrap();
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+            .unwrap()
+            .unwrap();
         assert!(!home.html.contains("R"));
         assert!(home.html.contains("<h1>S</h1>"));
         std::fs::remove_dir_all(&tmp).ok();
@@ -535,7 +588,7 @@ mod tests {
         // from it, or the menu would read "compositor" instead of "CLAUDE".
         std::fs::write(tmp.join("CLAUDE.md"), "# compositor\n\nagent notes").unwrap();
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
 
         let p = s
             .pages
@@ -560,7 +613,7 @@ mod tests {
         let tmp = scratch("repo-claude-case");
         std::fs::write(tmp.join("claude.md"), "lower body").unwrap();
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
         assert!(s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -569,7 +622,7 @@ mod tests {
     fn no_claude_surfaced_when_absent() {
         let tmp = scratch("repo-no-claude");
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         assert!(s.nav.0.is_empty());
         std::fs::remove_dir_all(&tmp).ok();
@@ -582,7 +635,7 @@ mod tests {
         let tmp = scratch("repo-claude-dup");
         std::fs::write(tmp.join("CLAUDE.md"), "repo root claude").unwrap();
         let mut s = site(vec![page("CLAUDE.md", "CLAUDE.html", "docs-tree claude")]);
-        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
         let claude: Vec<_> = s.pages.iter().filter(|p| p.url == "CLAUDE.html").collect();
         assert_eq!(claude.len(), 1, "no duplicate CLAUDE.html");
         assert_eq!(claude[0].html, "docs-tree claude", "docs-tree page kept");
@@ -602,7 +655,7 @@ mod tests {
                 url: "index.html".into(),
             },
         );
-        surface_repo_claude(&mut s, &cfg_named("S"), &tmp);
+        surface_repo_claude(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
         // Order: index.html, then CLAUDE.html.
         match (&s.nav.0[0], &s.nav.0[1]) {
             (NavNode::Page { url: u0, .. }, NavNode::Page { url: u1, .. }) => {
@@ -626,7 +679,7 @@ mod tests {
             ..SiteConfig::default()
         };
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_claude(&mut s, &cfg, &tmp);
+        surface_repo_claude(&mut s, &cfg, &tmp, &no_images()).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }

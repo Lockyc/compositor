@@ -23,10 +23,6 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
-// Nothing outside `root_assets` constructs `RootAssets` yet — the next task
-// wires it into `build`/`serve`, which will make every one of these allows
-// dead weight to remove.
-#[allow(dead_code)]
 pub struct RootAssets<'a> {
     /// Canonical, so `strip_prefix` against `docs_dir` agrees.
     project_dir: PathBuf,
@@ -38,7 +34,6 @@ pub struct RootAssets<'a> {
 }
 
 impl<'a> RootAssets<'a> {
-    #[allow(dead_code)]
     pub fn new(
         project_dir: &Path,
         docs_dir: &Path,
@@ -58,12 +53,10 @@ impl<'a> RootAssets<'a> {
     /// `build` copies exactly this set; `serve` serves exactly this set. Only
     /// resolved, non-excluded files are ever in it, so both are safe by
     /// construction.
-    #[allow(dead_code)]
     pub fn copies(&self) -> BTreeMap<String, PathBuf> {
         self.copies.borrow().clone()
     }
 
-    #[allow(dead_code)]
     fn unresolved(&self, url: &str) -> Result<ImageResolution> {
         match self.policy {
             LinkPolicy::Strict => Err(anyhow!("unresolvable image: {url} (from the repo root)")),
@@ -117,12 +110,10 @@ impl ImageResolver for RootAssets<'_> {
     }
 }
 
-#[allow(dead_code)]
 fn canonical(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
-#[allow(dead_code)]
 fn to_url(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
@@ -133,7 +124,6 @@ fn to_url(p: &Path) -> String {
 /// accumulated path is empty, so `../../etc/passwd` normalizes to `etc/passwd` —
 /// an escape silently rewritten into an innocent-looking relative path. Escape
 /// detection has to fail, not normalize.
-#[allow(dead_code)]
 fn resolve_under(base: &Path, rel: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for c in Path::new(rel).components() {
