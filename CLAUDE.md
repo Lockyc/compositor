@@ -198,14 +198,26 @@ shipped, nothing described that was removed), the feature list matching the buil
 the examples still runnable. A README describing the previous release is the most-read
 stale doc here.
 
-**A release publishes a Linux binary, and the homelab's updater depends on it.**
+**A release publishes a Linux binary, and the consuming host's updater depends on it.**
 Pushing the `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
-which cross-compiles `x86_64-unknown-linux-gnu`, attaches it plus a `.sha256`, and
-creates the release. The consuming host fetches that asset **unauthenticated** (the
-reason this repo is public) and pushes it to the build hosts — so a release whose asset
-is missing silently strands every consuming docs site on the old binary. **Verify the
-asset exists after tagging**; if the workflow did not fire, build and attach it by hand
-before calling the release done.
+which builds `x86_64-unknown-linux-gnu` with the pinned toolchain, attaches it plus a
+`.sha256`, and creates the release. The consuming host fetches that asset
+**unauthenticated** (the reason this repo is public) and pushes it to the build hosts —
+so a release whose asset is missing silently strands every consuming docs site on the
+old binary. Tag, then **verify the release exists with both assets**; that check is the
+release, not a formality.
+
+**Footgun — Actions can go silently deaf to `push` events.** After this repo was
+deleted and re-created, `push` and tag events created **no workflow run at all**
+(`actions/runs` → `total_count: 0`) while every visible setting looked healthy:
+Actions enabled, both workflows `active`, `allowed_actions: all`, public, not a fork.
+Only `workflow_dispatch` ran. The result is the dangerous kind of quiet — tagging
+appears to succeed and simply publishes nothing, which reads as "the release is done"
+until a consuming host is found still on the old binary. **The fix is to toggle
+Actions off and back on** (`gh api -X PUT repos/<o>/<r>/actions/permissions -F
+enabled=false`, then `=true`), which clears the stale state; push events fire
+immediately after. Don't go hunting through workflow YAML for this — the workflows are
+not the problem.
 
 ## Commands
 
