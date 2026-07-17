@@ -23,6 +23,10 @@ use std::cell::RefCell;
 use std::collections::BTreeMap;
 use std::path::{Component, Path, PathBuf};
 
+// Nothing outside `root_assets` constructs `RootAssets` yet — the next task
+// wires it into `build`/`serve`, which will make every one of these allows
+// dead weight to remove.
+#[allow(dead_code)]
 pub struct RootAssets<'a> {
     /// Canonical, so `strip_prefix` against `docs_dir` agrees.
     project_dir: PathBuf,
@@ -34,6 +38,7 @@ pub struct RootAssets<'a> {
 }
 
 impl<'a> RootAssets<'a> {
+    #[allow(dead_code)]
     pub fn new(
         project_dir: &Path,
         docs_dir: &Path,
@@ -53,10 +58,12 @@ impl<'a> RootAssets<'a> {
     /// `build` copies exactly this set; `serve` serves exactly this set. Only
     /// resolved, non-excluded files are ever in it, so both are safe by
     /// construction.
+    #[allow(dead_code)]
     pub fn copies(&self) -> BTreeMap<String, PathBuf> {
         self.copies.borrow().clone()
     }
 
+    #[allow(dead_code)]
     fn unresolved(&self, url: &str) -> Result<ImageResolution> {
         match self.policy {
             LinkPolicy::Strict => Err(anyhow!("unresolvable image: {url} (from the repo root)")),
@@ -73,6 +80,21 @@ impl ImageResolver for RootAssets<'_> {
         let Some(abs) = resolve_under(&self.project_dir, url) else {
             return self.unresolved(url);
         };
+        // `resolve_under` only rules out `..` lexically, in the url string — it
+        // never touches the filesystem. A symlink inside the repo pointing
+        // outside it (`link -> /etc`) passes that check with `link/passwd`
+        // looking contained, then `is_file` and both `strip_prefix` calls below
+        // would follow the symlink and treat the target as repo content.
+        // Canonicalizing resolves every symlink in the path, so re-checking
+        // containment against it is what actually defends against the escape;
+        // it also fails outright for a path that doesn't exist, so it folds in
+        // the missing-file case too. From here on `abs` is canonical.
+        let Ok(abs) = std::fs::canonicalize(&abs) else {
+            return self.unresolved(url);
+        };
+        if !abs.starts_with(&self.project_dir) {
+            return self.unresolved(url);
+        }
         if !abs.is_file() {
             return self.unresolved(url);
         }
@@ -95,10 +117,12 @@ impl ImageResolver for RootAssets<'_> {
     }
 }
 
+#[allow(dead_code)]
 fn canonical(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
 
+#[allow(dead_code)]
 fn to_url(p: &Path) -> String {
     p.to_string_lossy().replace('\\', "/")
 }
@@ -109,6 +133,7 @@ fn to_url(p: &Path) -> String {
 /// accumulated path is empty, so `../../etc/passwd` normalizes to `etc/passwd` —
 /// an escape silently rewritten into an innocent-looking relative path. Escape
 /// detection has to fail, not normalize.
+#[allow(dead_code)]
 fn resolve_under(base: &Path, rel: &str) -> Option<PathBuf> {
     let mut out = PathBuf::new();
     for c in Path::new(rel).components() {
@@ -227,6 +252,55 @@ mod tests {
         assert!(
             r.copies().is_empty(),
             "a path outside the repo must never be copied"
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn image_reached_through_a_symlink_out_of_the_repo_is_refused() {
+        // `resolve_under` is lexical: `link/passwd` has no `..`, so the url alone
+        // looks contained. Only the resolved path reveals the escape — and this
+        // resolver's output is copied by `build` and served by `serve`.
+        let d = repo("symlink-escape");
+        let outside =
+            std::env::temp_dir().join(format!("compositor-outside-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&outside);
+        fs::create_dir_all(&outside).unwrap();
+        fs::write(outside.join("secret.png"), "SECRET").unwrap();
+        std::os::unix::fs::symlink(&outside, d.join("link")).unwrap();
+
+        let ex = Excluder::new(&d, &d.join("docs"), &[]);
+        let r = RootAssets::new(&d, &d.join("docs"), &ex, LinkPolicy::Lenient);
+
+        let got = r.resolve("link/secret.png", Path::new("")).unwrap();
+        assert!(matches!(got, ImageResolution::Keep), "got: {got:?}");
+        assert!(
+            r.copies().is_empty(),
+            "a file reached through a symlink out of the repo must never be copied"
+        );
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::remove_dir_all(&outside);
+    }
+
+    #[test]
+    fn image_reached_through_a_symlink_inside_the_repo_still_resolves() {
+        // The escape guard canonicalizes before trusting the filesystem; a
+        // symlink whose target is legitimately inside the repo must keep
+        // resolving, not just get swept up by the containment check.
+        let d = repo("symlink-inside");
+        write(&d, "docs/images/logo.png", "x");
+        std::os::unix::fs::symlink(d.join("docs/images/logo.png"), d.join("link.png")).unwrap();
+        let ex = Excluder::new(&d, &d.join("docs"), &[]);
+        let r = RootAssets::new(&d, &d.join("docs"), &ex, LinkPolicy::Lenient);
+
+        let got = r.resolve("link.png", Path::new("")).unwrap();
+        assert!(
+            matches!(&got, ImageResolution::Rewrite(u) if u == "images/logo.png"),
+            "got: {got:?}"
+        );
+        assert!(
+            r.copies().is_empty(),
+            "an in-docs asset reached via a symlink must not be copied twice"
         );
         let _ = fs::remove_dir_all(&d);
     }
