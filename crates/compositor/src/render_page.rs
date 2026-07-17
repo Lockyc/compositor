@@ -212,6 +212,7 @@ fn repo_readme_home(project_dir: &Path, site_name: &str) -> Option<Page> {
         &HashSet::new(),
         &render_core::wikilink::WikiIndex::new(),
         LinkPolicy::Lenient,
+        &render_core::DocsAssets::new(HashSet::new(), LinkPolicy::Lenient),
     )
     .ok()?;
     let title = fm
@@ -282,6 +283,7 @@ pub fn surface_repo_claude(site: &mut SiteModel, cfg: &SiteConfig, project_dir: 
         &HashSet::new(),
         &render_core::wikilink::WikiIndex::new(),
         LinkPolicy::Lenient,
+        &render_core::DocsAssets::new(HashSet::new(), LinkPolicy::Lenient),
     ) else {
         return;
     };
