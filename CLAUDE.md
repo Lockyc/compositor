@@ -198,3 +198,17 @@ drift the pin exists to remove — a new stable lands a new clippy lint, CI goes
 with no code change, and the local gate still passes on the older compiler. That
 cost a patch release once. The workflows install the pinned toolchain with `rustup
 show` for exactly this reason.
+
+## CI triggers
+
+**`just gate` is the real gate; CI is not a per-commit check.** CI runs on push to
+`main`, on `pull_request`, and on `workflow_dispatch` — see `.github/workflows/ci.yml`.
+
+**Footgun: don't add `dev` to CI's push triggers.** It reads as an obvious omission —
+`dev` is the integration trunk, so surely it should be gated — which is exactly why this
+note exists; the reasoning is wrong here and the mistake has been made. `dev` takes
+frequent, deliberately half-finished pushes (the house rule is commit-as-you-go, WIP
+commits and all), so gating each one burns CI minutes to report failures that are
+expected and already known. Correctness on `dev` is held by `just gate` locally, run
+before work is called done; CI's job is the release path (`main`) plus outside
+contributions (`pull_request`). Use `workflow_dispatch` to run CI on `dev` on demand.
