@@ -131,6 +131,15 @@ and the rebuild watcher — and `Drop` does the same. It is the non-blocking cou
 path is load-bearing: two parallel serve loops would drift, and reimplementing serve in a host app is
 the shadow that this API exists to prevent.
 
+**A returned handle means bound, not healthy — degradation must be reported, not just survived.**
+Graceful degradation (see Purpose) keeps a site serving when its watcher fails to start, and under
+the CLI the reason goes to stderr where a human sees it. An embedded host has no stderr, so the same
+degradation arrives as a site that serves forever and never reloads, with nothing to read it off.
+`ServeHandle::live_reload()` is that channel, derived from the watcher the handle owns rather than
+stored, so it cannot drift. The general rule for this API: whenever the graceful path swallows a
+failure the CLI would have printed, the handle has to expose it — an embedded consumer only knows
+what the type tells it.
+
 lector (`github.com/lockyc/lector`) is the first consumer: one `ServeHandle` per doc-repo tab. So
 compositor now has a **second build toolchain** — its own `rust-toolchain.toml` standalone, and
 lector's pin when consumed as a git dep (rustup resolves from the dir `cargo` runs in, never from

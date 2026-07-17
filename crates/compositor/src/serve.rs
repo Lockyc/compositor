@@ -371,6 +371,10 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
 /// Returned by [`serve_handle`] once the port is bound, so a host app can start a site and
 /// immediately point a webview at `port`. Shutdown is idempotent and also runs on drop, so a
 /// dropped handle never leaks its threads.
+///
+/// A returned handle means *bound*, not *fully healthy*: live-reload can be dead on arrival
+/// (the watcher failed to start) while the site still serves. Check [`ServeHandle::live_reload`]
+/// rather than treating a successful return as a live site.
 pub struct ServeHandle {
     /// The bound loopback port. Assigned by the OS (`:0`), so it is never "address in use".
     pub port: u16,
@@ -380,6 +384,21 @@ pub struct ServeHandle {
 }
 
 impl ServeHandle {
+    /// Whether live-reload is running for this site.
+    ///
+    /// `false` means the watcher failed to start (see `spawn_watcher`) and the site is serving
+    /// a frozen render: pages still resolve, but no edit will ever reach them. Nothing else
+    /// surfaces that to an embedded host — the reason goes to stderr, which is the CLI's channel,
+    /// not a host app's — so a "bound port" does not mean "live site". A host driving a liveness
+    /// indicator should read this rather than infer liveness from `serve_handle` having returned.
+    ///
+    /// Derived from the watcher this handle owns rather than stored, so it cannot drift from the
+    /// truth. It reports `false` once the handle is stopped, which is honest: a stopped site is
+    /// not live-reloading.
+    pub fn live_reload(&self) -> bool {
+        self.watcher.is_some()
+    }
+
     /// Stop serving and watching, and wait for both threads to exit.
     pub fn shutdown(mut self) {
         self.stop();
@@ -687,6 +706,45 @@ mod tests {
         thread
             .join()
             .expect("rebuild thread must exit once its watcher is dropped");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn spawn_watcher_returns_none_when_the_path_cannot_be_watched() {
+        // The `None` branch is what `ServeHandle::live_reload()` reports as `false`, so it has to
+        // be reachable for that report to mean anything. Watching a path that does not exist is
+        // the forceable version of "the watcher failed to start".
+        let missing =
+            std::env::temp_dir().join(format!("compositor-absent-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&missing);
+
+        let cfg = SiteConfig {
+            site_name: "T".to_string(),
+            ..Default::default()
+        };
+        assert!(
+            spawn_watcher(sample_state(), cfg, missing.clone(), missing).is_none(),
+            "watching a non-existent dir must disable live-reload, not succeed"
+        );
+    }
+
+    #[test]
+    fn serve_handle_reports_live_reload_state() {
+        // A bound port must not be mistaken for a live site: the host has no other signal that
+        // live-reload died (the failure only ever went to stderr, which an embedded host never
+        // sees), so the handle has to say so itself.
+        let tmp = std::env::temp_dir().join(format!("compositor-live-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Live\n").unwrap();
+
+        let h = serve_handle(&tmp).expect("serve_handle binds");
+        assert!(
+            h.live_reload(),
+            "a watchable docs tree must report live-reload running"
+        );
+        h.shutdown();
 
         std::fs::remove_dir_all(&tmp).ok();
     }
