@@ -27,7 +27,9 @@ admonitions (and `???` collapsibles) now render too; raw HTML in your Markdown
 renders as-is (matching MkDocs — compositor assumes author-trusted content).
 `[[wikilinks]]` also resolve pages by title, filename, alias, or path, with the
 page's resolved title (frontmatter `title` → first `# H1` → humanized filename)
-as link text. See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
+as link text. compositor's `[lib]` target also exposes `serve_handle`/`ServeHandle` — an embedding
+API that runs a site on a loopback port for host apps (like lector) supervising many sites in one
+process. See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
 
 ## Build & use
 

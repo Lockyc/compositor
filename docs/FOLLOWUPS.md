@@ -12,8 +12,8 @@ Not bugs that block use — conscious deferrals.
 
 - **A panic while handling a request kills that server, silently.** No reachable panic path from
   external input exists today (the lock's critical sections are panic-free, so it can't poison; the
-  only other `expect` is a static, always-valid header), so this is latent, not live. What changed
-  with `serve_handle` is the *blast radius*, and it now differs per entry point:
+  only other `expect`s are two static, always-valid headers), so this is latent, not live. What
+  changed with `serve_handle` is the *blast radius*, and it now differs per entry point:
   - **`run_serve` (CLI):** the loop is the main thread — a panic aborts the process. Loud.
   - **`serve_handle` (embedded):** the loop is one background thread among N. A panic takes down that
     one site's server while the host still believes it is live. **Silent**, and the host cannot see it
@@ -34,8 +34,16 @@ Not bugs that block use — conscious deferrals.
   synchronously, so a slow-reading client briefly blocks other tabs' reload
   polls. Acceptable ceiling for a local/loopback server; revisit only if `serve`
   is put in front of many concurrent real readers.
-  Under `serve_handle` this is a non-issue by construction: one server per site, not one shared, so a
-  slow reader on one site cannot block another's reload poll.
+  Under `serve_handle` this is a non-issue by construction *for cross-site blocking*: one server per
+  site, not one shared, so a slow reader on one site cannot block another's reload poll. The same
+  synchronous write does give `serve_handle` a new consequence, though: unbounded shutdown latency.
+  `ServeHandle::stop()` joins the rebuild thread first (which may be mid-rebuild on a large tree),
+  then `unblock()`s and joins `serve_thread` — but `unblock()` only releases a thread parked in
+  `recv()`; it cannot interrupt an in-flight `respond()`, which is synchronous. A client that
+  requests a large asset and stops reading holds `shutdown()`/`Drop` until that write unsticks.
+  Neither wait is bounded, though both finish given a cooperative client and a finite rebuild; low
+  probability on loopback with small payloads, but matters most to a host calling `Drop` on a UI
+  thread.
 
 - **Search is unavailable under `serve`.** `serve` renders in memory and does not
   run Pagefind, so `/pagefind/*` 404s and the top-bar search box stays empty
