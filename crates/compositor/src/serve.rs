@@ -4,7 +4,7 @@ use anyhow::{anyhow, Result};
 use notify::RecommendedWatcher;
 use notify::{RecursiveMode, Watcher};
 use render_core::site::{build_site, SiteModel};
-use render_core::LinkPolicy;
+use render_core::{Excluder, LinkPolicy};
 use std::collections::HashMap;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
@@ -13,9 +13,14 @@ use tiny_http::{Header, Request, Response, Server};
 
 /// The live-reloaded site: url ("cli/tar.html") -> ready-to-send HTML (reload
 /// script already injected), plus a monotonic build counter the browser polls.
+///
+/// The `Excluder` lives here, not captured alongside, so `handle`'s on-demand
+/// asset check reads the same rules the live render used. Captured separately it
+/// would silently drift the moment a rebuild picked up a `.gitignore` edit.
 pub(crate) struct ServedSite {
     pub(crate) pages: HashMap<String, String>,
     pub(crate) epoch: u64,
+    pub(crate) excluder: Arc<Excluder>,
 }
 
 /// The client script, baselined at the epoch the page was built at (not the
@@ -126,7 +131,7 @@ fn respond(req: Request, status: u16, ctype: &str, body: Vec<u8>) {
     let _ = req.respond(resp);
 }
 
-fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path, exclude: &[String]) {
+fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     let raw = req.url().to_string();
     let path_only = raw.split(['?', '#']).next().unwrap_or("");
 
@@ -173,10 +178,8 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path, exclude: &[Stri
     // never a path the config excludes — `exclude` hides a tree from `build`,
     // and serving it anyway on direct URL would defeat that, especially with
     // `serve --host 0.0.0.0`).
-    if is_safe(&url)
-        && !url.ends_with(".md")
-        && !render_core::exclude::is_excluded(Path::new(&url), exclude)
-    {
+    let excluder = Arc::clone(&state.read().expect("state lock").excluder);
+    if is_safe(&url) && !url.ends_with(".md") && !excluder.is_excluded(Path::new(&url)) {
         let asset = docs.join(&url);
         if asset.is_file() {
             if let Ok(bytes) = std::fs::read(&asset) {
@@ -204,13 +207,18 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path, exclude: &[Stri
 /// race-free — and the write-guard critical section is limited to the two
 /// assignments so a panic during rendering can't poison the lock.
 fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, project_dir: &Path) {
-    match build_site(docs, LinkPolicy::Lenient, &cfg.exclude) {
+    // Rebuilt per cycle so a `.gitignore` edit takes effect, and stored into the
+    // state alongside the pages it produced so the render and `handle`'s
+    // on-demand asset check always agree.
+    let excluder = Arc::new(Excluder::new(project_dir, docs, &cfg.exclude));
+    match build_site(docs, LinkPolicy::Lenient, &excluder) {
         Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
             let pages = build_pages(cfg, &mut site, project_dir, next_epoch);
             let mut s = state.write().expect("state lock");
             s.pages = pages;
             s.epoch = next_epoch;
+            s.excluder = excluder;
         }
         Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
     }
@@ -268,14 +276,9 @@ fn spawn_watcher(
     Some((watcher, thread))
 }
 
-pub(crate) fn serve_loop(
-    server: &Server,
-    state: Arc<RwLock<ServedSite>>,
-    docs: PathBuf,
-    exclude: Vec<String>,
-) {
+pub(crate) fn serve_loop(server: &Server, state: Arc<RwLock<ServedSite>>, docs: PathBuf) {
     for req in server.incoming_requests() {
-        handle(req, &state, &docs, &exclude);
+        handle(req, &state, &docs);
     }
 }
 
@@ -309,7 +312,6 @@ struct Serving {
     server: Server,
     state: Arc<RwLock<ServedSite>>,
     docs: PathBuf,
-    exclude: Vec<String>,
     /// `None` = live-reload disabled. The caller must keep this alive; see `spawn_watcher`.
     watcher: Option<(RecommendedWatcher, JoinHandle<()>)>,
 }
@@ -320,15 +322,17 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
-    let mut site = build_site(&docs, LinkPolicy::Lenient, &cfg.exclude)?;
+    let excluder = Arc::new(Excluder::new(project_dir, &docs, &cfg.exclude));
+    for w in excluder.warnings() {
+        eprintln!("warning: {w}");
+    }
+
+    let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder)?;
     let state = Arc::new(RwLock::new(ServedSite {
         pages: build_pages(&cfg, &mut site, project_dir, 0),
         epoch: 0,
+        excluder,
     }));
-
-    // Captured before `cfg` moves into `spawn_watcher` — the on-demand asset branch in
-    // `handle` needs it too.
-    let exclude = cfg.exclude.clone();
 
     let watcher = spawn_watcher(
         Arc::clone(&state),
@@ -342,7 +346,6 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
         server,
         state,
         docs,
-        exclude,
         watcher,
     })
 }
@@ -352,7 +355,6 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
         server,
         state,
         docs,
-        exclude,
         // Held until this function returns; dropping it would disable live-reload.
         watcher: _watcher,
     } = setup(project_dir, host, port)?;
@@ -362,7 +364,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
     if open {
         open_browser(&format!("http://{listen}/"));
     }
-    serve_loop(&server, state, docs, exclude);
+    serve_loop(&server, state, docs);
     Ok(())
 }
 
@@ -443,7 +445,6 @@ pub fn serve_handle(project_dir: &Path) -> Result<ServeHandle> {
         server,
         state,
         docs,
-        exclude,
         watcher,
     } = setup(project_dir, "127.0.0.1", None)?;
 
@@ -455,7 +456,7 @@ pub fn serve_handle(project_dir: &Path) -> Result<ServeHandle> {
 
     let server = Arc::new(server);
     let loop_server = Arc::clone(&server);
-    let serve_thread = std::thread::spawn(move || serve_loop(&loop_server, state, docs, exclude));
+    let serve_thread = std::thread::spawn(move || serve_loop(&loop_server, state, docs));
 
     Ok(ServeHandle {
         port,
@@ -537,13 +538,17 @@ mod tests {
         assert!(!is_safe("a/../../b"));
     }
 
-    fn sample_state() -> Arc<RwLock<ServedSite>> {
+    fn sample_state(excluder: Excluder) -> Arc<RwLock<ServedSite>> {
         let mut pages = HashMap::new();
         pages.insert(
             "index.html".to_string(),
             inject_reload("<body>Hello</body>", 0),
         );
-        Arc::new(RwLock::new(ServedSite { pages, epoch: 0 }))
+        Arc::new(RwLock::new(ServedSite {
+            pages,
+            epoch: 0,
+            excluder: Arc::new(excluder),
+        }))
     }
 
     fn get(addr: std::net::SocketAddr, path: &str) -> String {
@@ -559,10 +564,10 @@ mod tests {
     fn serves_page_and_reload_endpoint() {
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
-        let state = sample_state();
         let docs = std::env::temp_dir();
+        let state = sample_state(Excluder::new(&docs, &docs, &[]));
         let s = std::sync::Arc::clone(&server);
-        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
+        std::thread::spawn(move || serve_loop(&s, state, docs));
 
         let page = get(addr, "/");
         assert!(page.contains("200 OK"), "page resp: {page}");
@@ -587,24 +592,24 @@ mod tests {
 
     #[test]
     fn serves_embedded_shell_css() {
-        let state = sample_state();
+        let docs = std::path::PathBuf::from(".");
+        let state = sample_state(Excluder::new(&docs, &docs, &[]));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
-        let docs = std::path::PathBuf::from(".");
         let s = std::sync::Arc::clone(&server);
-        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
+        std::thread::spawn(move || serve_loop(&s, state, docs));
         let css = get(addr, "/assets/compositor.css");
         assert!(css.contains(".topbar"));
     }
 
     #[test]
     fn serves_embedded_shell_js() {
-        let state = sample_state();
+        let docs = std::path::PathBuf::from(".");
+        let state = sample_state(Excluder::new(&docs, &docs, &[]));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
-        let docs = std::path::PathBuf::from(".");
         let s = std::sync::Arc::clone(&server);
-        std::thread::spawn(move || serve_loop(&s, state, docs, vec![]));
+        std::thread::spawn(move || serve_loop(&s, state, docs));
         let js = get(addr, "/assets/compositor.js");
         assert!(js.contains("addEventListener"));
     }
@@ -625,18 +630,52 @@ mod tests {
         std::fs::write(tmp.join("superpowers/note.txt"), "secret").unwrap();
         std::fs::write(tmp.join("guides/kept.txt"), "public").unwrap();
 
-        let state = sample_state();
+        let state = sample_state(Excluder::new(&tmp, &tmp, &["superpowers/".to_string()]));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
-        let exclude = vec!["superpowers/".to_string()];
         let docs_for_thread = tmp.clone();
         let s = std::sync::Arc::clone(&server);
-        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread, exclude));
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
 
         let excluded = get(addr, "/superpowers/note.txt");
         assert!(
             excluded.contains("404"),
             "excluded asset must not be served: {excluded}"
+        );
+
+        let kept = get(addr, "/guides/kept.txt");
+        assert!(kept.contains("200 OK"), "kept asset resp: {kept}");
+        assert!(kept.contains("public"), "kept asset resp: {kept}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn on_demand_asset_honors_gitignore() {
+        // Same exposure as `on_demand_asset_honors_exclude`, via the other rule:
+        // a gitignored tree must not be servable by direct URL either, or
+        // `serve --host 0.0.0.0` hands out the scratch the rule exists to hide.
+        let tmp = std::env::temp_dir().join(format!("compositor-serve-gi-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::create_dir_all(tmp.join("superpowers")).unwrap();
+        std::fs::create_dir_all(tmp.join("guides")).unwrap();
+        std::fs::write(tmp.join(".gitignore"), "superpowers/\n").unwrap();
+        std::fs::write(tmp.join("superpowers/note.txt"), "secret").unwrap();
+        std::fs::write(tmp.join("guides/kept.txt"), "public").unwrap();
+
+        // No `exclude` patterns at all: gitignore alone must hide the tree.
+        let state = sample_state(Excluder::new(&tmp, &tmp, &[]));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs_for_thread = tmp.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
+
+        let excluded = get(addr, "/superpowers/note.txt");
+        assert!(
+            excluded.contains("404"),
+            "gitignored asset must not be served: {excluded}"
         );
 
         let kept = get(addr, "/guides/kept.txt");
@@ -659,10 +698,12 @@ mod tests {
             docs_dir: Some("docs".to_string()),
             ..Default::default()
         };
-        let mut site = build_site(&docs, LinkPolicy::Lenient, &[]).unwrap();
+        let excluder = Arc::new(Excluder::new(&tmp, &docs, &[]));
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder).unwrap();
         let state = RwLock::new(ServedSite {
             pages: build_pages(&cfg, &mut site, &tmp, 0),
             epoch: 0,
+            excluder,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
@@ -699,8 +740,9 @@ mod tests {
 
         let cfg = SiteConfig::load(&tmp).unwrap();
         let docs = cfg.docs_path(&tmp);
+        let state = sample_state(Excluder::new(&tmp, &docs, &[]));
         let (watcher, thread) =
-            spawn_watcher(sample_state(), cfg, docs, tmp.clone()).expect("watcher starts");
+            spawn_watcher(state, cfg, docs, tmp.clone()).expect("watcher starts");
 
         drop(watcher);
         thread
@@ -723,8 +765,9 @@ mod tests {
             site_name: "T".to_string(),
             ..Default::default()
         };
+        let state = sample_state(Excluder::new(&missing, &missing, &[]));
         assert!(
-            spawn_watcher(sample_state(), cfg, missing.clone(), missing).is_none(),
+            spawn_watcher(state, cfg, missing.clone(), missing).is_none(),
             "watching a non-existent dir must disable live-reload, not succeed"
         );
     }

@@ -2,7 +2,7 @@ use crate::config::SiteConfig;
 use crate::render_page::render_page;
 use anyhow::{anyhow, Context, Result};
 use render_core::site::build_site;
-use render_core::LinkPolicy;
+use render_core::{Excluder, LinkPolicy};
 use std::path::{Component, Path};
 use walkdir::WalkDir;
 
@@ -14,7 +14,12 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
-    let mut site = build_site(&docs, policy, &cfg.exclude)?;
+    let excluder = Excluder::new(project_dir, &docs, &cfg.exclude);
+    for w in excluder.warnings() {
+        eprintln!("warning: {w}");
+    }
+
+    let mut site = build_site(&docs, policy, &excluder)?;
     // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
     crate::render_page::surface_repo_claude(&mut site, &cfg, project_dir);
     // compositor owns the home page: a docs tree with no index.md still gets a
@@ -30,7 +35,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
         }
         std::fs::write(&dest, html)?;
     }
-    copy_assets(&docs, &out, &cfg.exclude)?;
+    copy_assets(&docs, &out, &excluder)?;
     write_shell_assets(&out)?;
 
     println!("built {} pages -> {}", site.pages.len(), out.display());
@@ -74,7 +79,7 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
 /// downloads, data files a page links to) is copied verbatim so those
 /// references resolve in the built site — matching MkDocs, which copies all
 /// non-doc files from the docs dir into the output.
-fn copy_assets(docs: &Path, out: &Path, exclude: &[String]) -> Result<()> {
+fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
     // Skip the output tree: when the docs dir *is* the project dir (a bare
     // Markdown folder with no config), `out` sits inside `docs`, so without
     // this the walk would copy the freshly-written site back into itself.
@@ -91,7 +96,7 @@ fn copy_assets(docs: &Path, out: &Path, exclude: &[String]) -> Result<()> {
             continue;
         }
         let rel = path.strip_prefix(docs)?;
-        if render_core::exclude::is_excluded(rel, exclude) {
+        if excluder.is_excluded(rel) {
             continue;
         }
         let dest = out.join(rel);
@@ -182,6 +187,34 @@ mod tests {
             "excluded asset not copied"
         );
 
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn gitignored_dir_is_not_rendered_or_copied() {
+        let tmp = scratch("gitignore");
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::write(tmp.join(".gitignore"), "docs/superpowers/\n").unwrap();
+        std::fs::create_dir_all(tmp.join("docs/superpowers")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(tmp.join("docs/superpowers/spec.md"), "# Spec\n").unwrap();
+        std::fs::write(tmp.join("docs/superpowers/note.txt"), "scratch").unwrap();
+
+        // No compositor.toml at all: gitignore alone must do the work.
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        assert!(
+            !tmp.join("site/superpowers/spec.html").exists(),
+            "gitignored md must not be rendered"
+        );
+        assert!(
+            !tmp.join("site/superpowers/note.txt").exists(),
+            "gitignored asset must not be copied"
+        );
+        assert!(
+            tmp.join("site/index.html").exists(),
+            "kept page must render"
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

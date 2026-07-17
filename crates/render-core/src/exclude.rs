@@ -161,11 +161,6 @@ fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec
     (found, warnings)
 }
 
-/// True when `rel` (a docs-dir-relative path) falls under any exclude pattern.
-pub fn is_excluded(rel: &Path, patterns: &[String]) -> bool {
-    matches_patterns(rel, patterns)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;

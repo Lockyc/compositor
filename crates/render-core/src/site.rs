@@ -2,7 +2,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-use crate::exclude::is_excluded;
+use crate::exclude::Excluder;
 use crate::frontmatter::split_frontmatter;
 use crate::markdown::{first_h1, render_markdown, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
@@ -43,7 +43,7 @@ fn url_for(rel: &Path) -> String {
     s
 }
 
-pub fn build_site(docs_dir: &Path, policy: LinkPolicy, exclude: &[String]) -> Result<SiteModel> {
+pub fn build_site(docs_dir: &Path, policy: LinkPolicy, excluder: &Excluder) -> Result<SiteModel> {
     // Pass 1: collect metadata, known urls, and the wikilink index. Titles are
     // resolved here (frontmatter -> first H1 -> humanized stem) so the index can
     // carry each page's display title. Excluded paths are skipped.
@@ -57,7 +57,7 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy, exclude: &[String]) -> Re
             continue;
         }
         let rel = path.strip_prefix(docs_dir)?.to_path_buf();
-        if is_excluded(&rel, exclude) {
+        if excluder.is_excluded(&rel) {
             continue;
         }
         let raw = std::fs::read_to_string(path)?;
@@ -128,7 +128,7 @@ mod tests {
         );
         write(&d, "index.md", "Welcome — see [[Getting Started]].\n");
 
-        let site = build_site(&d, LinkPolicy::Strict, &[]).unwrap();
+        let site = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[])).unwrap();
         let home = site.pages.iter().find(|p| p.url == "index.html").unwrap();
         assert!(
             home.html
@@ -143,7 +143,9 @@ mod tests {
     fn build_errors_on_unresolvable_wikilink_under_strict() {
         let d = scratch("strict-dangling");
         write(&d, "index.md", "Dangling [[Nowhere]].\n");
-        let err = build_site(&d, LinkPolicy::Strict, &[]).err().unwrap();
+        let err = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[]))
+            .err()
+            .unwrap();
         assert!(err.to_string().contains("Nowhere"), "got: {err}");
         let _ = fs::remove_dir_all(&d);
     }
@@ -152,7 +154,7 @@ mod tests {
     fn build_serve_lenient_degrades_unresolvable_wikilink() {
         let d = scratch("lenient-dangling");
         write(&d, "index.md", "Dangling [[Nowhere]].\n");
-        let site = build_site(&d, LinkPolicy::Lenient, &[]).unwrap();
+        let site = build_site(&d, LinkPolicy::Lenient, &Excluder::new(&d, &d, &[])).unwrap();
         let home = &site.pages[0];
         assert!(
             home.html.contains(r#"data-wikilink="true""#),
