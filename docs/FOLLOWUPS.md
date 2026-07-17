@@ -77,6 +77,22 @@ Not bugs that block use — conscious deferrals.
   (`--lenient` renders it as a 404 instead). By design, not a bug: during a
   migration, either pass `--lenient` or remove the link.
 
+### `is_gitignored` only sees the `.gitignore` files `Excluder::new` collected
+
+`collect_gitignores` gathers the repo root, each directory between it and the docs
+dir, and each directory beneath the docs dir — deliberately not every directory in
+the repo (that walks `target/`, which Cargo seeds with a `.gitignore` containing
+`*`, and pruning would need the matchers still being built).
+
+So `is_gitignored` — which judges assets *outside* the docs tree for `RootAssets` —
+consults the repo-root `.gitignore` (the one that hides scratch in practice) but not
+a `.gitignore` sitting in an outside-docs directory, e.g. a repo-root
+`images/.gitignore`. An image only that file ignores would be copied into the site.
+
+Narrow: it needs a repo-root README to reference an image that a nested, outside-docs
+`.gitignore` hides. Fixing it means collecting matchers lazily per queried path, which
+buys a second resolution path for a case nobody has hit. Revisit if one shows up.
+
 ## Admonitions
 
 - **A TOC link to a heading inside a collapsed `???` doesn't auto-expand it.**

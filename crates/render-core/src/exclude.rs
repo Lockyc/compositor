@@ -23,6 +23,9 @@ pub struct Excluder {
     /// Canonical, so `docs_dir.join(rel)` is anchored the way `.gitignore`
     /// patterns are. Falls back to the path as given if canonicalization fails.
     docs_dir: PathBuf,
+    /// Canonical repo root, or `None` outside a git repo. Bounds the ancestor
+    /// walk for a path with no docs-relative form (see `is_gitignored`).
+    repo_root: Option<PathBuf>,
     /// One matcher per `.gitignore` file, sorted shallowest-first; matched
     /// deepest-first so a nested file wins, as in git.
     gitignores: Vec<Gitignore>,
@@ -32,16 +35,18 @@ pub struct Excluder {
 impl Excluder {
     pub fn new(project_dir: &Path, docs_dir: &Path, patterns: &[String]) -> Excluder {
         let docs_dir = canonical(docs_dir);
-        let (gitignores, warnings) = match find_repo_root(&canonical(project_dir)) {
+        let repo_root = find_repo_root(&canonical(project_dir));
+        let (gitignores, warnings) = match &repo_root {
             // Not a git repo, or a docs tree outside it: nothing is ignored.
             // Both are graceful, and the second is load-bearing — see
             // `collect_gitignores` on the panic this guards.
-            Some(root) if docs_dir.starts_with(&root) => collect_gitignores(&root, &docs_dir),
+            Some(root) if docs_dir.starts_with(root) => collect_gitignores(root, &docs_dir),
             _ => (Vec::new(), Vec::new()),
         };
         Excluder {
             patterns: patterns.to_vec(),
             docs_dir,
+            repo_root,
             gitignores,
             warnings,
         }
@@ -56,21 +61,49 @@ impl Excluder {
         }
         // Lexical only — no disk access — so a `rel` that doesn't exist (an
         // on-demand asset request for a bogus URL) matches fine.
-        let abs = self.docs_dir.join(rel);
+        self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel))
+    }
 
-        // Git's directory-pruning rule: "it is not possible to re-include a
-        // file if a parent directory of that file is excluded." Once an
-        // ancestor directory is itself ignored, git prunes the walk right
-        // there — it never reads a nested `.gitignore` inside it and never
-        // honors a deeper `!negation`, for the directory or anything under
-        // it. Walk `rel`'s ancestor directories shallow -> deep (docs_dir's
-        // direct children down to the file's immediate parent) so the same
-        // short-circuit applies here: the moment one resolves to `Ignore`,
-        // the file is excluded regardless of what a nested rule would say.
+    /// True when an **absolute** path is hidden by a repo `.gitignore`.
+    ///
+    /// The gitignore half of `is_excluded`, for a path with no docs-relative
+    /// form — an asset outside the docs tree, referenced by a repo-root README
+    /// (see compositor's `root_assets`). The `exclude` patterns are
+    /// docs-dir-relative by definition, so they do not apply here and are not
+    /// consulted. Shares `is_ignored_under` with `is_excluded`, so git's
+    /// directory-pruning rule holds identically on both paths.
+    ///
+    /// **Only the `.gitignore` files `new` collected are consulted** — the repo
+    /// root, each directory between it and the docs dir, and each directory
+    /// beneath the docs dir (see `collect_gitignores`). A `.gitignore` inside an
+    /// *outside-docs* directory (a repo-root `images/.gitignore`) is not among
+    /// them, so a rule only that file carries is not honored. The repo-root
+    /// `.gitignore` — what actually hides scratch in practice — is.
+    pub fn is_gitignored(&self, abs: &Path) -> bool {
+        match &self.repo_root {
+            Some(root) if abs.starts_with(root) => self.is_ignored_under(root, abs),
+            // Not a git repo, or a path outside it: nothing is ignored.
+            _ => false,
+        }
+    }
+
+    /// Resolve `abs` against the matcher chain, applying git's directory-pruning
+    /// rule with `base` as the top of the walk.
+    ///
+    /// Git's rule: "it is not possible to re-include a file if a parent
+    /// directory of that file is excluded." Once an ancestor directory is itself
+    /// ignored, git prunes the walk right there — it never reads a nested
+    /// `.gitignore` inside it and never honors a deeper `!negation`, for the
+    /// directory or anything under it. Walk `abs`'s ancestor directories
+    /// shallow -> deep (`base`'s direct children down to the file's immediate
+    /// parent) so the same short-circuit applies here: the moment one resolves
+    /// to `Ignore`, the path is excluded regardless of what a nested rule would
+    /// say.
+    fn is_ignored_under(&self, base: &Path, abs: &Path) -> bool {
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut cur = abs.parent();
         while let Some(d) = cur {
-            if d == self.docs_dir || !d.starts_with(&self.docs_dir) {
+            if d == base || !d.starts_with(base) {
                 break;
             }
             dirs.push(d.to_path_buf());
@@ -82,10 +115,9 @@ impl Excluder {
                 return true;
             }
         }
-
-        // No ancestor directory is ignored, so the file's own rule (including
-        // a `!negation`) governs normally.
-        self.matched(&abs, false).unwrap_or(false)
+        // No ancestor directory is ignored, so the path's own rule (including a
+        // `!negation`) governs normally.
+        self.matched(abs, false).unwrap_or(false)
     }
 
     /// Resolves `abs` against the matcher chain, deepest-first, honoring the
@@ -418,6 +450,49 @@ mod tests {
         assert!(e.is_excluded(Path::new("scratch/a.md")));
         assert!(e.is_excluded(Path::new("tracked/b.md")));
         assert!(!e.is_excluded(Path::new("guides/c.md")));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn is_gitignored_judges_a_path_outside_the_docs_dir() {
+        // A repo-root asset has no docs-relative path, so `is_excluded` cannot see
+        // it. This is the check `RootAssets` uses for a README's images.
+        let d = project("gi-abs", true);
+        write(&d, ".gitignore", "scratch/\n");
+        write(&d, "scratch/secret.png", "x");
+        write(&d, "images/logo.png", "x");
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        let root = std::fs::canonicalize(&d).unwrap();
+        assert!(e.is_gitignored(&root.join("scratch/secret.png")));
+        assert!(!e.is_gitignored(&root.join("images/logo.png")));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn is_gitignored_applies_gits_directory_pruning_rule() {
+        // The same rule 6bc44d3 fixed for docs paths must hold outside the docs
+        // tree: git prunes at an ignored directory and never honors a deeper
+        // `!negation`, so sharing one walk is what keeps the two consistent.
+        let d = project("gi-abs-prune", true);
+        write(&d, ".gitignore", "scratch/\n");
+        write(&d, "scratch/.gitignore", "!keep.png\n");
+        write(&d, "scratch/keep.png", "x");
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        let root = std::fs::canonicalize(&d).unwrap();
+        assert!(
+            e.is_gitignored(&root.join("scratch/keep.png")),
+            "a `!negation` under an ignored dir must not re-include the file"
+        );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn is_gitignored_is_false_outside_a_repo() {
+        // Not a git repo -> nothing is ignored, the same graceful default `new` has.
+        let d = project("gi-abs-nogit", false);
+        write(&d, ".gitignore", "scratch/\n");
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        assert!(!e.is_gitignored(&d.join("scratch/secret.png")));
         let _ = fs::remove_dir_all(&d);
     }
 
