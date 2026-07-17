@@ -84,9 +84,9 @@ Not bugs that block use — conscious deferrals.
   and only ever splits `#`, never `?`.** A link to a real file with a space —
   `[link](my%20page.md)` pointing at `my page.md` — hard-fails a strict build
   as an unresolvable link, even though the file exists. Pre-existing (dates to
-  the original M1 link work), independent of image resolution, and out of
-  scope here. It's the same bug class this branch just fixed for images one
-  function away: `resolve_image` in the same module already splits
+  the original M1 link work) and independent of image resolution. The image
+  path one function away does handle it: `resolve_image` in the same module
+  splits
   `#`/`?` off an image url and percent-decodes the remaining path before
   resolving, and is the model to follow if this is ever fixed. Fixing it would
   converge the two split sites, at which point a shared `(path, suffix)`
