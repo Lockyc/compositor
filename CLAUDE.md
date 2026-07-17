@@ -125,7 +125,8 @@ crates/
 
 compositor's `[lib]` target is a real public API, not an implementation detail of the binary.
 `serve_handle(project_dir) -> ServeHandle` serves a site on an OS-assigned loopback port and returns
-once bound; `ServeHandle::shutdown()` stops and joins both threads, and `Drop` does the same. It is
+once bound; `ServeHandle::shutdown()` stops and joins both threads—the request
+loop and the rebuild watcher—and `Drop` does the same. It is
 the non-blocking counterpart to `run_serve`, and **both build from the same `setup()`** — that shared
 path is load-bearing: two parallel serve loops would drift, and reimplementing serve in a host app is
 the shadow that this API exists to prevent.
