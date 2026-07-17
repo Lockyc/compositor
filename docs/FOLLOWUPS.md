@@ -104,13 +104,27 @@ Not bugs that block use — conscious deferrals.
   even though the file is copied to `site/`. Comrak re-encodes a space in the
   common case, so this is narrow: only a literal `#` or `?` inside a filename
   triggers it. Only `Rewrite` is affected, and only `RootAssets` returns
-  `Rewrite` — `DocsAssets` returns `Keep`, untouched. Repo-root page images
-  never resolved at all before this branch, so this is 404-before-and-after
-  for a pathological filename, not a regression. Fixing it needs
+  `Rewrite` — `DocsAssets` returns `Keep`, untouched. Without this resolution
+  path such an image would not resolve at all, so it is a 404 either way for a
+  pathological filename — an incomplete edge, not a regression. Fixing it needs
   percent-encoding against a correct path character set, which is easy to get
   subtly wrong, to serve a filename most sites will never have. Degrades
   visibly (a 404, not silent data loss) and the file is still copied.
   Revisit if a real site hits it.
+
+- **`is_gitignored` only sees the `.gitignore` files `Excluder::new` collected.**
+  `collect_gitignores` gathers the repo root, each directory between it and the
+  docs dir, and each directory beneath the docs dir — deliberately not every
+  directory in the repo (that walks `target/`, which Cargo seeds with a
+  `.gitignore` containing `*`, and pruning would need the matchers still being
+  built). So `is_gitignored` — which judges assets *outside* the docs tree for
+  `RootAssets` — consults the repo-root `.gitignore` (the one that hides scratch
+  in practice) but not a `.gitignore` sitting in an outside-docs directory, e.g.
+  a repo-root `images/.gitignore`. An image only that file ignores would be
+  copied into the site. Narrow: it needs a repo-root README to reference an
+  image that a nested, outside-docs `.gitignore` hides. Fixing it means
+  collecting matchers lazily per queried path, which buys a second resolution
+  path for a case nobody has hit. Revisit if one shows up.
 
 ## Wikilinks (M3)
 
@@ -135,22 +149,6 @@ Not bugs that block use — conscious deferrals.
   **strict** `build` that's a hard error, same as any other broken link
   (`--lenient` renders it as a 404 instead). By design, not a bug: during a
   migration, either pass `--lenient` or remove the link.
-
-### `is_gitignored` only sees the `.gitignore` files `Excluder::new` collected
-
-`collect_gitignores` gathers the repo root, each directory between it and the docs
-dir, and each directory beneath the docs dir — deliberately not every directory in
-the repo (that walks `target/`, which Cargo seeds with a `.gitignore` containing
-`*`, and pruning would need the matchers still being built).
-
-So `is_gitignored` — which judges assets *outside* the docs tree for `RootAssets` —
-consults the repo-root `.gitignore` (the one that hides scratch in practice) but not
-a `.gitignore` sitting in an outside-docs directory, e.g. a repo-root
-`images/.gitignore`. An image only that file ignores would be copied into the site.
-
-Narrow: it needs a repo-root README to reference an image that a nested, outside-docs
-`.gitignore` hides. Fixing it means collecting matchers lazily per queried path, which
-buys a second resolution path for a case nobody has hit. Revisit if one shows up.
 
 ## Admonitions
 
