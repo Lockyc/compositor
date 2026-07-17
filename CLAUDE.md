@@ -90,52 +90,43 @@ the repo root or don't. (See `markdown::ImageResolver`.)
 
 ## Current state
 
-Milestone 1 (plain-GFM `build`) is **complete**: `compositor build <dir>` renders a
-Markdown tree end to end — correct titles, case-insensitive sorted tree nav,
-`.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, and
-verbatim copy of non-Markdown assets.
+Everything compositor was built for is shipped: `build`, the `serve` dev server,
+admonitions, `[[wikilinks]]`, and the host rollout — every consuming site builds with
+it, and the `mkdocs-base` base-config repo it superseded is deleted. The README is the
+tour of what that gets you; this section is the map from feature to the code that owns
+it, plus the invariants that code doesn't state on its own.
 
-Milestone 4 (the `serve` dev server) is also **complete**: `compositor serve`
-watches the docs tree, rebuilds in memory on change (via the lenient link policy
-described in Purpose above), serves the result over `tiny_http`, and live-reloads
-every viewer's browser by polling a `/__reload` epoch endpoint. `serve`'s accepted
-limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)
-— read it before extending `serve`.
+**Start here for deferred work and accepted limitations:**
+[`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) is the register for the whole tree — it covers
+`serve`, repo-root asset resolution (`RootAssets`), wikilinks, `exclude`, and
+admonitions. Read the relevant section before extending any of them: each entry is a
+conscious deferral recorded with its rationale, so an unread one gets rediscovered as a
+bug and "fixed" against the reasoning that deferred it.
 
-The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
-(brand, light/dark toggle that persists across reload), a left
-tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
-(h2/h3) with scroll-spy. Each page also carries a **prev/next pager** at the foot of
-the content column (accent-outline buttons over the reading order — the flattened nav
-with the landing page first; see `render_page::reading_order`) and a site **footer**
-(a "Built with compositor" attribution).
+| Surface | Owns it |
+| --- | --- |
+| Markdown → `SiteModel`, link rewrite, image resolution | `render-core/src/markdown.rs`, `site.rs` |
+| Admonition preprocessor | `render-core/src/admonitions.rs` |
+| Wikilink index + resolution | `render-core/src/wikilink.rs` |
+| Tree nav | `render-core/src/nav.rs` |
+| `.gitignore` / `exclude` gating | `render-core/src/exclude.rs` |
+| Theme wrap, per-page TOC, prev/next pager | `compositor/src/render_page.rs` (`reading_order`) |
+| Repo-root asset resolution | `compositor/src/root_assets.rs` (`RootAssets`) |
+| `serve`, live-reload, the embedding API | `compositor/src/serve.rs` (`setup`, `serve_handle`) |
 
-Milestone 2 (admonitions) is also **complete**: MkDocs/Material `!!!` callouts and
-`???`/`???+` collapsibles, with an arbitrary type word as the CSS class (known types
-color-coded, unknown types gracefully default), an optional custom or empty title, and
-nesting. A source preprocessor rewrites each block into an HTML wrapper whose body
-still renders as Markdown in the single comrak pass — which requires comrak's raw-HTML
-passthrough (`render.unsafe_ = true`), an intentional choice matching MkDocs: raw HTML
-in author-trusted docs is allowed, not escaped.
-
-Milestone 3 (`[[wikilinks]]` + frontmatter-driven KB titles) is **complete**:
-`[[Name]]` resolves a page by name against a tree-wide index — frontmatter title,
-filename stem (and its humanized form), `aliases`, or a path-qualified `[[dir/Name]]`
-— with the page's resolved title (frontmatter `title` → first `# H1` → humanized
-filename — the same chain as the "Title resolution:" bullet below) driving both
-link identity and the rendered link text.
-Matching is case-insensitive. `[[Name|label]]` overrides the text and `[[Name#anchor]]`
-deep-links. Resolution honors the strict/lenient split: `build` hard-errors on an
-unresolvable or ambiguous wikilink; `serve` picks the sorted-first candidate for an
-ambiguous one and renders an unresolvable one as a visibly-dead `<a data-wikilink>`
-that resolves on a later rebuild once the target exists.
-
-Milestone 5 (host rollout + `mkdocs-base` retirement) is **complete**: compositor
-is deployed to its build hosts and every consuming documentation site builds with
-it; the `mkdocs-base` base-config repo has been deleted. The explicit-`nav` override
-once planned for M2 was **dropped from the roadmap** — the auto-generated tree nav is
-the only navigation. Known divergence from MkDocs: filenames
-with spaces produce spaces in URLs (functional; slugification is a deferred decision).
+- **Raw HTML passes through (`render.unsafe_ = true`) — load-bearing, not incidental.**
+  The admonition preprocessor rewrites each block into an HTML wrapper whose body must
+  still render as Markdown in the *single* comrak pass; escaping raw HTML breaks that
+  mechanism. It also matches MkDocs: raw HTML in author-trusted docs is allowed. Don't
+  "harden" this without replacing the preprocessor first.
+- **The auto-generated tree nav is the only navigation.** An explicit-`nav` override was
+  once planned for M2 and **dropped** — don't reintroduce it as a missing piece.
+- **Wikilink resolution honors the strict/lenient split** (see Purpose): `build`
+  hard-errors on an unresolvable *or ambiguous* wikilink; `serve` picks the sorted-first
+  candidate for an ambiguous one and renders an unresolvable one as a visibly-dead
+  `<a data-wikilink>` that resolves on a later rebuild once the target exists.
+- **Known divergence from MkDocs: filenames with spaces produce spaces in URLs.**
+  Functional; slugification is a deferred decision, not an oversight.
 
 ## Layout
 
@@ -180,11 +171,18 @@ lector's pin when consumed as a git dep (rustup resolves from the dir `cargo` ru
 `~/.cargo/git/checkouts/`). The two can diverge; lector's build is the drift detector, and the failure
 is loud and local. Do not add a pin here to "fix" that — this repo's pin governs its own gate and CI.
 
-## Milestone-1 render surface (exhaustive)
+## Render surface (exhaustive)
 
 - GFM: headings, lists, tables, task lists, autolinks, strikethrough, images,
   blockquotes.
 - Fenced code with syntect highlighting.
+- MkDocs/Material `!!!` callouts and `???`/`???+` collapsibles: an arbitrary type word
+  becomes the CSS class (known types color-coded, unknown types gracefully default), an
+  optional custom or empty title, and nesting.
+- `[[wikilinks]]` resolved against a tree-wide index — frontmatter title, filename stem
+  (and its humanized form), `aliases`, or a path-qualified `[[dir/Name]]`; the page's
+  resolved title drives both link identity and rendered text. Matching is
+  case-insensitive; `[[Name|label]]` overrides the text, `[[Name#anchor]]` deep-links.
 - Frontmatter `title` and `aliases` keys (consume; ignore all other keys).
 - Internal `.md` -> `.html` link rewrite.
 - Heading anchors (via comrak `header_ids`).
@@ -197,9 +195,6 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
   reference (see Purpose).
 - Server-side per-page TOC (h2/h3) with scroll-spy.
 
-Explicitly **not** in Milestone 1: host rollout (M5).
-(`[[wikilinks]]`, admonitions, the `serve` dev server, and the M5 host rollout have
-all since landed; the explicit-`nav` override was dropped.)
 No functionality duplicated from `docgraph`: `build` fails only on an unresolvable
 internal link (a render error) — orphan/graph auditing stays docgraph's.
 
