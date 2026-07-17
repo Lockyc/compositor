@@ -1,8 +1,11 @@
 name: CI
 
 on:
+  # `dev` is the integration trunk and work lands there by direct merge, never by
+  # PR — so gating on `main` + `pull_request` alone means CI never runs on any
+  # commit before it is already released. Push to both branches.
   push:
-    branches: [main]
+    branches: [main, dev]
   pull_request:
   workflow_dispatch:
 
