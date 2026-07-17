@@ -200,9 +200,24 @@ forward-merged into `dev` so `dev ⊇ main` holds.
 The version source of truth is the workspace `version` in the root `Cargo.toml`; the
 binary self-reports it (`compositor --version`, via clap) and the `v<version>` git tag
 matches it exactly — never restate the literal elsewhere. A shipped bump is a **GitHub
-release** (curate the README, bump the version, tag `v<version>` on the release commit,
-publish notes summarising what shipped), never a bare tag. Still `0.x` while the
-CLI/config surface moves.
+release** — never a bare tag. Still `0.x` while the CLI/config surface moves.
+
+**Cut a release with `just release`** — the house recipe, the same shape docgraph and
+mycelium use. Bump the workspace `version`, curate the README (below), write
+`RELEASE_NOTES.md` (gitignored per-release scratch — an input to the recipe, never a
+tracked file), commit, then run it. It refuses a missing notes file, a dirty tree, or an
+existing tag *before* touching anything public; then runs the gate, pushes `dev`,
+fast-forwards `main`, tags, creates the release with your notes, and waits for the Linux
+binary to land.
+
+**Never `gh release create` by hand, and never let CI create the release.** Two creators
+race, and the loser publishes nothing. `release.yml` used to create it on tag push, so a
+manual create won the race and left a release carrying **zero assets** — which reads
+exactly like success. `just release` is the only creator; `release.yml` only *uploads*.
+
+**Notes are written, not generated.** `--generate-notes` summarises merged PRs, and this
+repo integrates by direct merge to `dev` and opens none — so it yields a bare compare link
+that says nothing. mycelium shipped an empty release that way; don't repeat it.
 
 **Curating the `README.md` is part of cutting the release, not an extra.** The release
 is when the public face actually gets read, so it is when the README is reconciled
@@ -212,13 +227,14 @@ the examples still runnable. A README describing the previous release is the mos
 stale doc here.
 
 **A release publishes a Linux binary, and the consuming host's updater depends on it.**
-Pushing the `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
-which builds `x86_64-unknown-linux-gnu` with the pinned toolchain, attaches it plus a
-`.sha256`, and creates the release. The consuming host fetches that asset
-**unauthenticated** (the reason this repo is public) and pushes it to the build hosts —
-so a release whose asset is missing silently strands every consuming docs site on the
-old binary. Tag, then **verify the release exists with both assets**; that check is the
-release, not a formality.
+[`release.yml`](.github/workflows/release.yml) builds `x86_64-unknown-linux-gnu` with the
+pinned toolchain and uploads it plus a `.sha256` onto the release `just release` already
+created — triggered by `release: published`, never by the tag. It runs in CI for exactly
+one reason: a Mac cannot build that target without cross tooling. The consuming host
+fetches the asset **unauthenticated** (the reason this repo is public) and pushes it to
+the build hosts, so a release whose asset never arrives silently strands every consuming
+docs site on the old binary. `just release` blocks until both assets appear and fails
+loudly if they don't — that wait **is** the release, not a formality.
 
 **Why `x86_64-unknown-linux-gnu` only — the asset is a deploy artifact, not a
 courtesy download.** It exists because the build hosts are small Debian containers
@@ -236,17 +252,16 @@ path; there is no macOS install story to serve. **Don't add targets to
 build time and maintenance bought for nothing. Add one when a consumer exists, and name
 that consumer.
 
-**Footgun — Actions can go silently deaf to `push` events.** After this repo was
-deleted and re-created, `push` and tag events created **no workflow run at all**
-(`actions/runs` → `total_count: 0`) while every visible setting looked healthy:
-Actions enabled, both workflows `active`, `allowed_actions: all`, public, not a fork.
-Only `workflow_dispatch` ran. The result is the dangerous kind of quiet — tagging
-appears to succeed and simply publishes nothing, which reads as "the release is done"
-until a consuming host is found still on the old binary. **The fix is to toggle
-Actions off and back on** (`gh api -X PUT repos/<o>/<r>/actions/permissions -F
-enabled=false`, then `=true`), which clears the stale state; push events fire
-immediately after. Don't go hunting through workflow YAML for this — the workflows are
-not the problem.
+**Footgun — Actions can go silently deaf to events.** After this repo was deleted and
+re-created, `push` and tag events created **no workflow run at all** (`actions/runs` →
+`total_count: 0`) while every visible setting looked healthy: Actions enabled, both
+workflows `active`, `allowed_actions: all`, public, not a fork. Only `workflow_dispatch`
+ran. **The fix is to toggle Actions off and back on** (`gh api -X PUT
+repos/<o>/<r>/actions/permissions -F enabled=false`, then `=true`), which clears the stale
+state. Don't go hunting through workflow YAML for this — the workflows are not the
+problem. This no longer produces a *silent* empty release (`just release` waits on the
+assets and fails), but the recovery still matters: re-attach with `gh workflow run
+release.yml -f tag=v<version>`.
 
 ## Commands
 

@@ -1,17 +1,38 @@
 name: Release
 
+# This workflow ONLY attaches the Linux binary to a release that already exists.
+# `just release` creates the release, with human-written notes, from the Mac.
+#
+# It must never create the release itself. It used to (`gh release create` on tag
+# push), which raced `just release`: whichever ran second failed, and when the
+# workflow lost, it published *zero* assets onto a release that otherwise looked
+# fine — stranding every build host on the old binary. One creator, one uploader.
 on:
-  push:
-    tags: ["v*"]
+  release:
+    types: [published]
+  # Recovery path for the Actions-deafness footgun (see CLAUDE.md § Branching &
+  # releases): re-attach assets to an existing release by tag.
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing release tag to attach the Linux binary to (e.g. v0.5.0)"
+        required: true
 
 permissions:
   contents: write
 
+env:
+  TAG: ${{ github.event.release.tag_name || inputs.tag }}
+
 jobs:
   linux-binary:
-    runs-on: ubuntu-22.04  # conservative glibc for the Debian LXC build hosts
+    runs-on: ubuntu-22.04 # conservative glibc for the Debian LXC build hosts
     steps:
       - uses: actions/checkout@v4
+        with:
+          # Build the tagged commit, not the default branch. They are normally the
+          # same commit, but "normally" is not a guarantee worth shipping a binary on.
+          ref: ${{ github.event.release.tag_name || inputs.tag }}
 
       # No toolchain action: the runner's rustup reads rust-toolchain.toml, so the
       # published binary is built by the same pinned compiler the gate tested with.
@@ -31,12 +52,11 @@ jobs:
             dist/compositor-x86_64-unknown-linux-gnu
           (cd dist && sha256sum compositor-x86_64-unknown-linux-gnu > compositor-x86_64-unknown-linux-gnu.sha256)
 
-      - name: publish release
+      - name: attach the binary to the release
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          gh release create "${GITHUB_REF_NAME}" \
+          gh release upload "${TAG}" \
             dist/compositor-x86_64-unknown-linux-gnu \
             dist/compositor-x86_64-unknown-linux-gnu.sha256 \
-            --title "${GITHUB_REF_NAME}" \
-            --generate-notes
+            --clobber

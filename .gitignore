@@ -3,3 +3,6 @@
 docs/superpowers/
 .superpowers/
 /site
+# Per-release scratch for `just release`. Ignored so it isn't an untracked .md —
+# every release it's an input to.
+/RELEASE_NOTES.md
