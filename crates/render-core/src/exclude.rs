@@ -470,18 +470,33 @@ mod tests {
 
     #[test]
     fn is_gitignored_applies_gits_directory_pruning_rule() {
-        // The same rule 6bc44d3 fixed for docs paths must hold outside the docs
-        // tree: git prunes at an ignored directory and never honors a deeper
-        // `!negation`, so sharing one walk is what keeps the two consistent.
+        // The negation has to live in a matcher `collect_gitignores` actually
+        // gathers, or this proves nothing: a `.gitignore` in a sibling/outside-
+        // docs directory (e.g. a top-level `scratch/.gitignore`) is never
+        // collected at all, so a naive single-matcher `matched(abs, false)`
+        // call would only ever see the root matcher and pass this test
+        // identically with or without the ancestor-pruning walk.
+        //
+        // Put `docs_dir` a level below the repo root (`d/sub/docs`) so
+        // `collect_gitignores` gathers BOTH `d/.gitignore` (root) and
+        // `d/sub/.gitignore` (between root and docs_dir). The root file
+        // ignores `sub/scratch/`; the deeper, collected `d/sub/.gitignore`
+        // tries to whitelist `scratch/keep.png` inside it. Git still prunes at
+        // the ignored ancestor directory and never reaches that deeper
+        // `!negation` — without the shared `is_ignored_under` walk, a naive
+        // deepest-matcher-wins lookup would hit `d/sub/.gitignore`'s whitelist
+        // directly and wrongly re-include the file.
         let d = project("gi-abs-prune", true);
-        write(&d, ".gitignore", "scratch/\n");
-        write(&d, "scratch/.gitignore", "!keep.png\n");
-        write(&d, "scratch/keep.png", "x");
-        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        write(&d, ".gitignore", "sub/scratch/\n");
+        write(&d, "sub/.gitignore", "!scratch/keep.png\n");
+        write(&d, "sub/scratch/keep.png", "x");
+        write(&d, "sub/docs/index.md", "x");
+        let e = Excluder::new(&d, &d.join("sub/docs"), &[]);
         let root = std::fs::canonicalize(&d).unwrap();
         assert!(
-            e.is_gitignored(&root.join("scratch/keep.png")),
-            "a `!negation` under an ignored dir must not re-include the file"
+            e.is_gitignored(&root.join("sub/scratch/keep.png")),
+            "a `!negation` in a deeper collected matcher must not re-include \
+             a file under an ancestor directory the root matcher ignores"
         );
         let _ = fs::remove_dir_all(&d);
     }
