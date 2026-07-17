@@ -424,4 +424,47 @@ mod tests {
         assert_eq!(got, "DOCS", "docs content must win the url collision");
         std::fs::remove_dir_all(&tmp).ok();
     }
+
+    #[test]
+    fn docs_image_with_percent_encoded_space_resolves_under_strict() {
+        // Regression: an author must percent-encode a space for Markdown to parse
+        // the url; the asset on disk ("my image.png") is decoded, so a strict
+        // build must not treat the encoded reference as unresolvable.
+        let tmp = scratch("img-encoded");
+        std::fs::write(tmp.join("docs/my image.png"), "PNG").unwrap();
+        std::fs::write(
+            tmp.join("docs/index.md"),
+            "# Home\n\n![spaces](my%20image.png)\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(
+            home.contains(r#"src="my%20image.png""#),
+            "the emitted src must stay exactly as written: {home}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn docs_image_with_fragment_resolves_under_strict() {
+        let tmp = scratch("img-fragment");
+        std::fs::write(tmp.join("docs/sprite.svg"), "<svg></svg>").unwrap();
+        std::fs::write(
+            tmp.join("docs/index.md"),
+            "# Home\n\n![sprite](sprite.svg#icon)\n",
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(
+            home.contains(r#"src="sprite.svg#icon""#),
+            "the emitted src must stay exactly as written: {home}"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

@@ -63,6 +63,16 @@ Not bugs that block use — conscious deferrals.
   probability on loopback with small payloads, but matters most to a host calling `Drop` on a UI
   thread.
 
+- **`serve`'s on-demand asset branch does not percent-decode the request path.**
+  `GET /my%20image.png` 404s even for a plain docs asset that exists on disk as
+  `my image.png` — the request url is used as a lookup/path key verbatim, the
+  same shape of bug image resolution had (see `resolve_image` in
+  `render-core/src/markdown.rs`, which now decodes before resolving). Pre-existing,
+  independent of image resolution: it reproduces identically for an asset that
+  predates it. `build`'s output is unaffected — a static host decodes the request
+  normally; only `serve`'s own handler skips the step. Fix by percent-decoding the
+  request path before it's used as a lookup key, mirroring `resolve_image`.
+
 ## Wikilinks (M3)
 
 - **No shortest-unique-suffix path matching.** Path-qualified `[[dir/Name]]` matches

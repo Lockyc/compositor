@@ -881,6 +881,7 @@ dependencies = [
  "anyhow",
  "comrak",
  "ignore",
+ "percent-encoding",
  "serde",
  "serde_yaml",
  "walkdir",

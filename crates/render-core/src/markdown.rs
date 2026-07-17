@@ -262,9 +262,23 @@ fn resolve_image(url: &str, page_dir: &Path, images: &dyn ImageResolver) -> Resu
     if is_external_image_url(url) {
         return Ok(None);
     }
-    match images.resolve(url, page_dir)? {
+    // Split off any trailing #fragment or ?query (mirrors rewrite_link's anchor
+    // split above) so a resolver's lookup key is the bare path, then re-attach
+    // it verbatim onto a Rewrite so the emitted url keeps it.
+    let cut = url.find(['#', '?']).unwrap_or(url.len());
+    let (path_part, suffix) = url.split_at(cut);
+    // A Markdown author must percent-encode a filename with a space (or other
+    // reserved character) for the url to parse at all; every resolver's lookup
+    // key is a decoded filesystem-relative path, so decode before handing it
+    // over. A path that isn't valid percent-encoded UTF-8 is passed through
+    // as-is rather than failing resolution over an encoding quirk.
+    let decoded = percent_encoding::percent_decode_str(path_part)
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| path_part.to_string());
+    match images.resolve(&decoded, page_dir)? {
         ImageResolution::Keep => Ok(None),
-        ImageResolution::Rewrite(u) => Ok(Some(u)),
+        ImageResolution::Rewrite(u) => Ok(Some(format!("{u}{suffix}"))),
     }
 }
 
@@ -959,5 +973,68 @@ mod tests {
         );
         assert!(r.html.contains(r#"src="//cdn/x.png""#), "got: {}", r.html);
         assert!(r.html.contains(r#"src="/root.png""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn image_url_with_fragment_resolves_and_keeps_its_fragment() {
+        // sprite.svg#icon: the asset on disk is "sprite.svg"; the fragment must
+        // survive into the emitted src unchanged, matching rewrite_link's anchor
+        // handling for ordinary links.
+        let images = docs_assets(&["sprite.svg"], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![sprite](sprite.svg#icon)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"src="sprite.svg#icon""#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn image_url_with_query_resolves_and_keeps_its_query() {
+        let images = docs_assets(&["sprite.svg"], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![query](sprite.svg?v=1)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"src="sprite.svg?v=1""#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn percent_encoded_image_url_resolves_and_stays_encoded() {
+        // Filenames with spaces are a live, acknowledged shape (see this repo's
+        // CLAUDE.md); an author must percent-encode the space for Markdown to
+        // parse the url at all, so the asset on disk is the decoded "my image.png".
+        let images = docs_assets(&["my image.png"], LinkPolicy::Strict);
+        let r = render_markdown(
+            "![spaces](my%20image.png)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"src="my%20image.png""#),
+            "the Keep path must not rewrite the author's url: {}",
+            r.html
+        );
     }
 }
