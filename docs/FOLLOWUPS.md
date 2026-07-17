@@ -72,6 +72,45 @@ Not bugs that block use — conscious deferrals.
   predates it. `build`'s output is unaffected — a static host decodes the request
   normally; only `serve`'s own handler skips the step. Fix by percent-decoding the
   request path before it's used as a lookup key, mirroring `resolve_image`.
+  **Constraint on that fix:** `is_safe` (`serve.rs:106`) validates the raw
+  request url, and the on-disk branch then joins that same raw url onto the
+  docs dir (`serve.rs:195`). Decoding the path *before* the safety check would
+  let `%2e%2e%2f` become a literal `..` that `is_safe` had already waved
+  through as safe — a directory-traversal hole. Any decode-then-lookup change
+  must re-run `is_safe` (or an equivalent check) against the *decoded* path,
+  not just the raw one.
+
+- **`rewrite_link` (`render-core/src/markdown.rs:156`) never percent-decodes
+  and only ever splits `#`, never `?`.** A link to a real file with a space —
+  `[link](my%20page.md)` pointing at `my page.md` — hard-fails a strict build
+  as an unresolvable link, even though the file exists. Pre-existing (dates to
+  the original M1 link work), independent of image resolution, and out of
+  scope here. It's the same bug class this branch just fixed for images one
+  function away: `resolve_image` in the same module already splits
+  `#`/`?` off an image url and percent-decodes the remaining path before
+  resolving, and is the model to follow if this is ever fixed. Fixing it would
+  converge the two split sites, at which point a shared `(path, suffix)`
+  helper would earn its keep — today they genuinely diverge (`rewrite_link`
+  also does `.md`->`.html`), so they're deliberately not collapsed.
+
+## Repo-root image resolution (`RootAssets`)
+
+- **`RootAssets`'s `Rewrite` can emit a raw `#`/`?` that came from the
+  filename, not the author's markup.** `RootAssets` returns a decoded
+  filesystem path, so `resolve_image`'s `format!("{u}{suffix}")` can splice a
+  literal `#`/`?` from a *filename* into the emitted `src`. A repo-root README
+  writing `![x](foo%23bar.png)` for a real file named `foo#bar.png` emits
+  `src="foo#bar.png"`; the browser reads `#bar.png` as a fragment and 404s,
+  even though the file is copied to `site/`. Comrak re-encodes a space in the
+  common case, so this is narrow: only a literal `#` or `?` inside a filename
+  triggers it. Only `Rewrite` is affected, and only `RootAssets` returns
+  `Rewrite` — `DocsAssets` returns `Keep`, untouched. Repo-root page images
+  never resolved at all before this branch, so this is 404-before-and-after
+  for a pathological filename, not a regression. Fixing it needs
+  percent-encoding against a correct path character set, which is easy to get
+  subtly wrong, to serve a filename most sites will never have. Degrades
+  visibly (a 404, not silent data loss) and the file is still copied.
+  Revisit if a real site hits it.
 
 ## Wikilinks (M3)
 

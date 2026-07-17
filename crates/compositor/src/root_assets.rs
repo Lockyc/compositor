@@ -313,12 +313,12 @@ mod tests {
     }
 
     #[test]
-    fn outside_docs_image_with_fragment_resolves_and_records_the_bare_path() {
-        // The fragment is markdown's.rs's concern (resolve_image splits it off
-        // before calling this resolver and re-attaches it to the rewritten url);
-        // this resolver only ever sees — and must record a copy source for —
-        // the bare path.
-        let d = repo("fragment");
+    fn outside_docs_image_copy_source_is_the_canonicalized_real_path() {
+        // The other outside-docs test (above) only checks that a copy is
+        // recorded (`contains_key`); this one is the sole test asserting what
+        // `copies()` actually maps the url *to* — the canonicalized on-disk
+        // path, not just its presence.
+        let d = repo("copy-source");
         write(&d, "images/sprite.svg", "<svg></svg>");
         let ex = Excluder::new(&d, &d.join("docs"), &[]);
         let r = RootAssets::new(&d, &d.join("docs"), &ex, LinkPolicy::Strict);
@@ -333,7 +333,7 @@ mod tests {
         assert_eq!(
             src,
             Some(std::fs::canonicalize(d.join("images/sprite.svg")).unwrap()),
-            "the copy source must be the real file the fragment-bearing url named"
+            "the copy source must be the canonicalized real file, not the raw joined path"
         );
         let _ = fs::remove_dir_all(&d);
     }
