@@ -27,9 +27,11 @@ that persists, a tree-nav marking the active page, a per-page TOC with
 scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
 MkDocs-style `!!!` admonitions and `???` collapsibles; `[[wikilinks]]` resolved
 by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.html`
-link rewriting; and non-Markdown assets copied through verbatim. Raw HTML in your
-Markdown renders as-is, matching MkDocs — compositor assumes author-trusted
-content.
+link rewriting; and non-Markdown assets copied through verbatim. Images resolve
+against the page that references them — including a repo-root `README.md` or
+`CLAUDE.md` surfaced into the site, whose images resolve against the repo root
+and are copied in on reference. Raw HTML in your Markdown renders as-is,
+matching MkDocs — compositor assumes author-trusted content.
 
 **There is no site search**, deliberately — see [`CLAUDE.md`](CLAUDE.md).
 
@@ -75,9 +77,10 @@ case — a list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for
 directory you keep in git but don't publish. Both apply. The rendered site lands
 in `out_dir`.
 
-By default `build` is strict: an unresolvable internal link fails the build.
-Pass `--lenient` to publish anyway — the broken link renders as an honest 404 —
-for unattended pipelines that must never miss an update over one bad link.
+By default `build` is strict: an unresolvable internal link — or an image whose
+file isn't there — fails the build. Pass `--lenient` to publish anyway, rendering
+either as an honest 404, for unattended pipelines that must never miss an update
+over one bad link. `serve` is always lenient, for the same reason.
 
 For local editing, `serve` watches the docs tree and live-reloads the browser on
 every change:
