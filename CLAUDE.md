@@ -187,9 +187,25 @@ forward-merged into `dev` so `dev ⊇ main` holds.
 The version source of truth is the workspace `version` in the root `Cargo.toml`; the
 binary self-reports it (`compositor --version`, via clap) and the `v<version>` git tag
 matches it exactly — never restate the literal elsewhere. A shipped bump is a **GitHub
-release** (bump the version, tag `v<version>` on the release commit, publish notes
-summarising what shipped), never a bare tag. Still `0.x` while the CLI/config surface
-moves.
+release** (curate the README, bump the version, tag `v<version>` on the release commit,
+publish notes summarising what shipped), never a bare tag. Still `0.x` while the
+CLI/config surface moves.
+
+**Curating the `README.md` is part of cutting the release, not an extra.** The release
+is when the public face actually gets read, so it is when the README is reconciled
+against what compositor now *is*: status honest (nothing "coming soon" that already
+shipped, nothing described that was removed), the feature list matching the built code,
+the examples still runnable. A README describing the previous release is the most-read
+stale doc here.
+
+**A release publishes a Linux binary, and the homelab's updater depends on it.**
+Pushing the `v*` tag runs [`.github/workflows/release.yml`](.github/workflows/release.yml),
+which cross-compiles `x86_64-unknown-linux-gnu`, attaches it plus a `.sha256`, and
+creates the release. The consuming host fetches that asset **unauthenticated** (the
+reason this repo is public) and pushes it to the build hosts — so a release whose asset
+is missing silently strands every consuming docs site on the old binary. **Verify the
+asset exists after tagging**; if the workflow did not fire, build and attach it by hand
+before calling the release done.
 
 ## Commands
 

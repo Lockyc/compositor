@@ -13,22 +13,34 @@ embeds.
 
 ## Status
 
-**Work in progress.** Milestone 1 (`compositor build`) is complete: plain-GFM
-Markdown → themed, tree-navigated static HTML, with non-Markdown
-assets copied through, verified end to end against a real 42-page docs site.
-Milestone 4 (`compositor serve`) is also complete: a live-reload dev server that
-watches the docs tree, rebuilds in memory on every change, and refreshes every
-open browser tab automatically. The theme-polish pass has also landed: a
-Pico.css-based shell with a top bar (brand, light/dark toggle), a left tree-nav
-with active-page highlighting, and a server-side per-page TOC with scroll-spy.
-There is no site search — see [`CLAUDE.md`](CLAUDE.md). MkDocs-style `!!!`
-admonitions (and `???` collapsibles) now render too; raw HTML in your Markdown
-renders as-is (matching MkDocs — compositor assumes author-trusted content).
-`[[wikilinks]]` also resolve pages by title, filename, alias, or path, with the
-page's resolved title (frontmatter `title` → first `# H1` → humanized filename)
-as link text. compositor's `[lib]` target also exposes `serve_handle`/`ServeHandle` — an embedding
-API that runs a site on a loopback port for host apps (like lector) supervising many sites in one
-process. See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
+**In use, and still `0.x`.** compositor has replaced MkDocs on every site it was
+built for — it builds them all today, and the base-config repo it superseded is
+gone. It stays `0.x` because the CLI and `compositor.toml` surface may still
+move; the rendering is the settled part.
+
+**Two commands.** `build` renders a docs tree to static HTML. `serve` is a
+live-reload dev server: it watches the tree, rebuilds in memory on change, and
+refreshes open browser tabs.
+
+**What you get, with no config:** a Pico.css shell (top bar, light/dark toggle
+that persists, a tree-nav marking the active page, a per-page TOC with
+scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
+MkDocs-style `!!!` admonitions and `???` collapsibles; `[[wikilinks]]` resolved
+by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.html`
+link rewriting; and non-Markdown assets copied through verbatim. Raw HTML in your
+Markdown renders as-is, matching MkDocs — compositor assumes author-trusted
+content.
+
+**There is no site search**, deliberately — see [`CLAUDE.md`](CLAUDE.md).
+
+**As a library**, the `render-core` crate turns a Markdown tree into an in-memory
+site model, and compositor's `[lib]` target exposes `serve_handle`/`ServeHandle`
+— an embedding API that runs a site on a loopback port, for host apps supervising
+many sites in one process. lector, a Tauri desktop docs console, is the consumer
+it was built for.
+
+See [`CLAUDE.md`](CLAUDE.md) for the full render surface and the known
+divergences from MkDocs.
 
 ## Build & use
 
@@ -36,6 +48,11 @@ process. See [`CLAUDE.md`](CLAUDE.md) for the full render surface and roadmap.
 cargo build --release
 ./target/release/compositor build --dir path/to/docs-repo
 ```
+
+Each [release](https://github.com/Lockyc/compositor/releases/latest) also ships a
+prebuilt `x86_64-unknown-linux-gnu` binary and its `.sha256`, if you'd rather not
+build from source. It's a single static-ish binary with no runtime dependencies —
+drop it on PATH and go.
 
 A `compositor.toml` is optional. With one, it sets `site_name` (optionally
 `site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`],
