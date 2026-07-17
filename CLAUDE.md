@@ -207,6 +207,22 @@ so a release whose asset is missing silently strands every consuming docs site o
 old binary. Tag, then **verify the release exists with both assets**; that check is the
 release, not a formality.
 
+**Why `x86_64-unknown-linux-gnu` only — the asset is a deploy artifact, not a
+courtesy download.** It exists because the build hosts are small Debian containers
+with *no Rust toolchain*, and putting one there — rustup plus a full workspace compile,
+per release, on a 2-core/2 GB box — is strictly worse than shipping one self-contained
+binary they can't build but can run. That is the whole reason this repo is public: an
+unauthenticated fetch needs no credential on the host.
+
+**There is deliberately no macOS (or any other) binary: nothing consumes one.** The two
+real consumers are that Linux updater, and **lector, which depends on compositor as a
+pinned git *crate* (`compositor = { git = …, rev = … }`) and builds it from source** —
+it never fetches a release asset. On a Mac you have the repo, so `cargo build` is the
+path; there is no macOS install story to serve. **Don't add targets to
+`release.yml` for symmetry** — a matrix that publishes artifacts nobody fetches is
+build time and maintenance bought for nothing. Add one when a consumer exists, and name
+that consumer.
+
 **Footgun — Actions can go silently deaf to `push` events.** After this repo was
 deleted and re-created, `push` and tag events created **no workflow run at all**
 (`actions/runs` → `total_count: 0`) while every visible setting looked healthy:

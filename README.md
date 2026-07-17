@@ -49,10 +49,13 @@ cargo build --release
 ./target/release/compositor build --dir path/to/docs-repo
 ```
 
+That works anywhere Rust does — compositor is developed on macOS and runs on Linux.
+
 Each [release](https://github.com/Lockyc/compositor/releases/latest) also ships a
-prebuilt `x86_64-unknown-linux-gnu` binary and its `.sha256`, if you'd rather not
-build from source. It's a single static-ish binary with no runtime dependencies —
-drop it on PATH and go.
+prebuilt `x86_64-unknown-linux-gnu` binary and its `.sha256`: a single binary with
+no runtime dependencies, for dropping onto a Linux box that has no Rust toolchain
+(which is exactly what it's there for). Linux is the only prebuilt target —
+everywhere else, build from source with the two lines above.
 
 A `compositor.toml` is optional. With one, it sets `site_name` (optionally
 `site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`],
