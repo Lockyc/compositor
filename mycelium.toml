@@ -7,7 +7,7 @@ stack   = ["rust", "comrak", "syntect", "askama"]
 
 [[provides]]
 name    = "compositor build"
-summary = "Renders a Markdown docs directory into a themed, tree-navigated, Pagefind-indexed static HTML site; a drop-in replacement for `mkdocs build`"
+summary = "Renders a Markdown docs directory into a themed, tree-navigated static HTML site; a drop-in replacement for `mkdocs build`"
 url     = "https://github.com/Lockyc/compositor"
 
 [[provides]]

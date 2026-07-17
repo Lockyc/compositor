@@ -1,6 +1,6 @@
 //! Embedded shell assets. Pico + our overrides are concatenated into one
-//! cacheable stylesheet; the JS drives the theme toggle, scroll-spy, and
-//! Pagefind search box. All vendored into the binary (no runtime CDN).
+//! cacheable stylesheet; the JS drives the theme toggle and scroll-spy. All
+//! vendored into the binary (no runtime CDN).
 
 use std::sync::LazyLock;
 

@@ -1,6 +1,6 @@
-// compositor shell behaviour: theme toggle, TOC scroll-spy, Pagefind search.
+// compositor shell behaviour: theme toggle, TOC scroll-spy.
 // Progressive enhancement — every feature degrades gracefully if JS/assets are
-// absent (the TOC is still a plain list of links, search box just stays empty).
+// absent (the TOC is still a plain list of links).
 (function () {
   "use strict";
 
@@ -57,12 +57,5 @@
       { rootMargin: "0px 0px -70% 0px", threshold: 0 }
     );
     headings.forEach(function (h) { observer.observe(h); });
-  }
-
-  // --- Pagefind search UI (present only in `build` output) ----------------
-  if (window.PagefindUI) {
-    try {
-      new window.PagefindUI({ element: "#search", showSubResults: true });
-    } catch (e) {}
   }
 })();

@@ -33,7 +33,6 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     copy_assets(&docs, &out, &cfg.exclude)?;
     write_shell_assets(&out)?;
 
-    run_pagefind(&out);
     println!("built {} pages -> {}", site.pages.len(), out.display());
     Ok(())
 }
@@ -119,18 +118,6 @@ fn write_shell_assets(out: &Path) -> Result<()> {
         crate::assets::COMPOSITOR_JS,
     )?;
     Ok(())
-}
-
-fn run_pagefind(out: &Path) {
-    match std::process::Command::new("pagefind")
-        .arg("--site")
-        .arg(out)
-        .status()
-    {
-        Ok(s) if s.success() => {}
-        Ok(s) => eprintln!("warning: pagefind exited with {s}"),
-        Err(_) => eprintln!("warning: pagefind not found on PATH; search index skipped"),
-    }
 }
 
 #[cfg(test)]

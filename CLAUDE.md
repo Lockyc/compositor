@@ -4,7 +4,18 @@
 
 A Rust static-site generator for Markdown doc repos, replacing MkDocs across a
 set of documentation sites. `compositor build <dir>` renders a directory of Markdown into a themed,
-tree-navigated, Pagefind-indexed static HTML site.
+tree-navigated static HTML site.
+
+**There is no site search, and adding one has not been decided.** A Pagefind
+integration was scaffolded in at M1 — inherited from MkDocs Material's defaults
+rather than chosen — and put a search box in every page's chrome that depended on
+a `pagefind` binary which was never installed on any build host. It therefore
+never worked once: every site shipped a dead search box, and every build printed
+`warning: pagefind not found on PATH`. It is now removed root and branch. Do not
+reintroduce search (Pagefind or otherwise) as a missing piece or a tidy-up — a
+capability that has never worked and was never chosen is a thing to delete, not
+to finish. If search is ever wanted, that is a decision to be made first, not a
+gap to be filled.
 
 **compositor owns the entire shell; Markdown is purely content.** The page chrome,
 navigation menu, link rewriting, titles, the home/landing page, and configuration
@@ -56,8 +67,8 @@ halt or swallow updates**. This splits the two commands' failure policy:
 
 Milestone 1 (plain-GFM `build`) is **complete**: `compositor build <dir>` renders a
 Markdown tree end to end — correct titles, case-insensitive sorted tree nav,
-`.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, verbatim
-copy of non-Markdown assets, and an optional Pagefind index.
+`.md`→`.html` link rewrite, syntect highlighting, attribute-safe escaping, and
+verbatim copy of non-Markdown assets.
 
 Milestone 4 (the `serve` dev server) is also **complete**: `compositor serve`
 watches the docs tree, rebuilds in memory on change (via the lenient link policy
@@ -67,14 +78,12 @@ limitations and deferred hardening are in [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.m
 — read it before extending `serve`.
 
 The theme-polish pass has also landed: the shell is Pico.css-based, with a top bar
-(brand, Pagefind search box, light/dark toggle that persists across reload), a left
+(brand, light/dark toggle that persists across reload), a left
 tree-nav that marks the active page (`aria-current`), and a server-side per-page TOC
 (h2/h3) with scroll-spy. Each page also carries a **prev/next pager** at the foot of
 the content column (accent-outline buttons over the reading order — the flattened nav
 with the landing page first; see `render_page::reading_order`) and a site **footer**
-(a "Built with compositor" attribution). The search box is populated by the Pagefind
-index built during `build`; it is unavailable under `serve` (which renders in memory
-and never runs Pagefind) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md).
+(a "Built with compositor" attribution).
 
 Milestone 2 (admonitions) is also **complete**: MkDocs/Material `!!!` callouts and
 `???`/`???+` collapsibles, with an arbitrary type word as the CSS class (known types
@@ -117,7 +126,7 @@ crates/
   compositor/                   # CLI + library: config load, Pico-based theme wrap
                                  # (askama) served via a linked assets/compositor.css
                                  # + assets/compositor.js (no inline stylesheet),
-                                 # write out_dir, invoke Pagefind. Its [lib] target
+                                 # and write out_dir. Its [lib] target
                                  # is the embedding surface — see below.
 ```
 
@@ -159,9 +168,7 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
   references resolve in the built site — as MkDocs does.
-- Server-side per-page TOC (h2/h3) with scroll-spy, and the Pagefind search UI
-  wired into the top bar (search works in `build` output; unavailable under
-  `serve`, see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md)).
+- Server-side per-page TOC (h2/h3) with scroll-spy.
 
 Explicitly **not** in Milestone 1: host rollout (M5).
 (`[[wikilinks]]`, admonitions, the `serve` dev server, and the M5 host rollout have

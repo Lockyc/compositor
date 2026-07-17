@@ -45,12 +45,6 @@ Not bugs that block use — conscious deferrals.
   probability on loopback with small payloads, but matters most to a host calling `Drop` on a UI
   thread.
 
-- **Search is unavailable under `serve`.** `serve` renders in memory and does not
-  run Pagefind, so `/pagefind/*` 404s and the top-bar search box stays empty
-  (a console 404 for `pagefind-ui.js`, no JS error). Search works in `build`
-  output, which is what gets hosted. Wiring an in-memory index into `serve` is
-  deferred.
-
 ## Wikilinks (M3)
 
 - **No shortest-unique-suffix path matching.** Path-qualified `[[dir/Name]]` matches

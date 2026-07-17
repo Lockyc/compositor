@@ -46,13 +46,15 @@
   }
 }
 
-/* --- Top bar: brand · search · theme toggle · (mobile) nav toggle. */
+/* --- Top bar: brand · theme toggle · (mobile) nav toggle. The brand's column
+   takes the free space so the two controls sit hard right; `justify-self` keeps
+   the brand's click target sized to its text rather than the whole column. */
 .topbar {
   position: sticky;
   top: 0;
   z-index: 5;
   display: grid;
-  grid-template-columns: auto 1fr auto auto;
+  grid-template-columns: 1fr auto auto;
   align-items: center;
   gap: 1rem;
   padding: 0.6rem 1.5rem;
@@ -60,11 +62,11 @@
   background: var(--pico-background-color);
 }
 .topbar .brand {
+  justify-self: start;
   font-weight: 700;
   text-decoration: none;
   color: var(--pico-color);
 }
-.topbar .search { min-width: 0; }
 /* The two topbar controls are accent-outline buttons: transparent with a green
    border + green label that fills on hover, readable on both themes. Colour is set
    from `--pico-primary` (NOT `--pico-color`, which Pico re-scopes to
