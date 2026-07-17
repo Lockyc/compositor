@@ -10,6 +10,14 @@ Not bugs that block use — conscious deferrals.
   `compositor.toml` (e.g. `site_name`) take effect only on restart. Fine for
   content editing; revisit if config becomes something you tune live.
 
+- **`.gitignore` changes are not watched.** The watcher watches only the docs dir,
+  but the repo-root `.gitignore` sits outside it whenever `docs_dir` is a subdir.
+  So editing `.gitignore` does not itself trigger a rebuild; the new rules land on
+  the next rebuild from any docs edit, or on restart. The `Excluder` *is* rebuilt
+  every cycle (see `rebuild_into`), so this is staleness of the *trigger*, not of
+  the rules. Revisit by watching the collected `.gitignore` paths alongside the
+  docs dir.
+
 - **A panic while handling a request kills that server, silently.** No reachable panic path from
   external input exists today (the lock's critical sections are panic-free, so it can't poison; the
   only other `expect`s are two static, always-valid headers), so this is latent, not live. What

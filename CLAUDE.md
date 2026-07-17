@@ -26,11 +26,24 @@ no `compositor.toml` and no special files to work:
 - **No config** → defaults are synthesized (`site_name` from the folder; docs from
   `docs/` if present, else the dir itself). A *malformed* `compositor.toml` is still a
   hard, named error — only a *missing* one falls back. (See `config::SiteConfig::load`.)
+- **Gitignored paths** → skipped in rendering, asset-copy, and `serve`'s on-demand
+  asset serving. Untracked scratch (`docs/superpowers/`, a `.claude/worktrees/`
+  copy of the whole tree) is not site content, so no config is needed to keep it
+  out — a docs repo with no `compositor.toml` at all still gets this. **Repo
+  `.gitignore` files only**, never the global `~/.config/git/ignore` or
+  `.git/info/exclude`: those are machine-local, and honoring them would render the
+  same repo differently on a laptop than on a build host. A non-git directory
+  ignores nothing (the graceful default a host app hits serving a bare Markdown
+  folder). Gitignored means never rendered — there is deliberately no opt-out and
+  no re-inclusion list; the way to publish a path is to stop ignoring it in git.
+  (See `exclude::Excluder`.)
 - **`exclude`** (optional, in `compositor.toml`) → a list of docs-dir-relative path
   prefixes skipped in both rendering and asset-copy, and honored by `serve`'s
   on-demand asset serving too — the `exclude_docs` analog, e.g.
-  `exclude = ["superpowers/"]`. Absent → nothing is excluded (graceful default, same
-  as no config at all).
+  `exclude = ["superpowers/"]`. **Distinct from the gitignore rule above, and both
+  apply:** gitignore hides *untracked* scratch, `exclude` hides a *tracked* tree
+  kept in git but deliberately not published. Absent → nothing is excluded beyond
+  what git already ignores.
 - **No home page** → `/` always resolves to a working landing, first match wins:
   a docs-root `index`/`home`/`readme` (any case) is promoted; else the **repo-root
   `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);

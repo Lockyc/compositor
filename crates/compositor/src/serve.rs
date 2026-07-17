@@ -175,9 +175,9 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     }
 
     // On-demand asset straight from docs_dir (never .md, never traversing out,
-    // never a path the config excludes — `exclude` hides a tree from `build`,
-    // and serving it anyway on direct URL would defeat that, especially with
-    // `serve --host 0.0.0.0`).
+    // never a path the `Excluder` hides — both `exclude` and gitignore rules hide
+    // a tree from `build`, and serving it anyway on direct URL would defeat that,
+    // especially with `serve --host 0.0.0.0`).
     let excluder = Arc::clone(&state.read().expect("state lock").excluder);
     if is_safe(&url) && !url.ends_with(".md") && !excluder.is_excluded(Path::new(&url)) {
         let asset = docs.join(&url);
@@ -211,6 +211,9 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
     // state alongside the pages it produced so the render and `handle`'s
     // on-demand asset check always agree.
     let excluder = Arc::new(Excluder::new(project_dir, docs, &cfg.exclude));
+    for w in excluder.warnings() {
+        eprintln!("warning: {w}");
+    }
     match build_site(docs, LinkPolicy::Lenient, &excluder) {
         Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
