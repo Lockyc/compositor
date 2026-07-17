@@ -10,3 +10,4 @@ serde = { version = "1", features = ["derive"] }
 serde_yaml = "0.9"
 walkdir = "2"
 anyhow = "1"
+ignore = "0.4"
