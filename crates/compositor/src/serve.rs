@@ -567,10 +567,18 @@ mod tests {
     fn serves_page_and_reload_endpoint() {
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
-        let docs = std::env::temp_dir();
+        // A scoped scratch dir, not the real `/tmp`: `Excluder::new` walks
+        // `docs_dir` looking for `.gitignore` files, so pointing it at `/tmp`
+        // itself walks every file under it (and would walk a whole git repo
+        // if any `/tmp` ancestor ever became one).
+        let docs =
+            std::env::temp_dir().join(format!("compositor-serve-basic-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&docs);
+        std::fs::create_dir_all(&docs).unwrap();
         let state = sample_state(Excluder::new(&docs, &docs, &[]));
+        let docs_for_thread = docs.clone();
         let s = std::sync::Arc::clone(&server);
-        std::thread::spawn(move || serve_loop(&s, state, docs));
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
 
         let page = get(addr, "/");
         assert!(page.contains("200 OK"), "page resp: {page}");
@@ -591,6 +599,8 @@ mod tests {
             reload.to_lowercase().contains("cache-control: no-store"),
             "reload resp: {reload}"
         );
+
+        std::fs::remove_dir_all(&docs).ok();
     }
 
     #[test]

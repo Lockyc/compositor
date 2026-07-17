@@ -57,21 +57,57 @@ impl Excluder {
         // Lexical only — no disk access — so a `rel` that doesn't exist (an
         // on-demand asset request for a bogus URL) matches fine.
         let abs = self.docs_dir.join(rel);
+
+        // Git's directory-pruning rule: "it is not possible to re-include a
+        // file if a parent directory of that file is excluded." Once an
+        // ancestor directory is itself ignored, git prunes the walk right
+        // there — it never reads a nested `.gitignore` inside it and never
+        // honors a deeper `!negation`, for the directory or anything under
+        // it. Walk `rel`'s ancestor directories shallow -> deep (docs_dir's
+        // direct children down to the file's immediate parent) so the same
+        // short-circuit applies here: the moment one resolves to `Ignore`,
+        // the file is excluded regardless of what a nested rule would say.
+        let mut dirs: Vec<PathBuf> = Vec::new();
+        let mut cur = abs.parent();
+        while let Some(d) = cur {
+            if d == self.docs_dir || !d.starts_with(&self.docs_dir) {
+                break;
+            }
+            dirs.push(d.to_path_buf());
+            cur = d.parent();
+        }
+        dirs.reverse(); // shallow -> deep, matching git's top-down traversal
+        for dir in &dirs {
+            if self.matched(dir, true) == Some(true) {
+                return true;
+            }
+        }
+
+        // No ancestor directory is ignored, so the file's own rule (including
+        // a `!negation`) governs normally.
+        self.matched(&abs, false).unwrap_or(false)
+    }
+
+    /// Resolves `abs` against the matcher chain, deepest-first, honoring the
+    /// first non-`None` result — git's own precedence. `Some(true)` = ignored,
+    /// `Some(false)` = explicitly whitelisted (`!negation`), `None` = no rule
+    /// matched anywhere in the chain.
+    fn matched(&self, abs: &Path, is_dir: bool) -> Option<bool> {
         for gi in self.gitignores.iter().rev() {
             // Skip matchers this path isn't under: `matched_path_or_any_parents`
             // asserts the path is under the matcher root.
             if !abs.starts_with(gi.path()) {
                 continue;
             }
-            match gi.matched_path_or_any_parents(&abs, /* is_dir */ false) {
-                Match::Ignore(_) => return true,
+            match gi.matched_path_or_any_parents(abs, is_dir) {
+                Match::Ignore(_) => return Some(true),
                 // An explicit `!negation` in the deepest matching file wins, as
                 // in git — stop, don't fall through to a shallower rule.
-                Match::Whitelist(_) => return false,
+                Match::Whitelist(_) => return Some(false),
                 Match::None => {}
             }
         }
-        false
+        None
     }
 
     /// Non-fatal `.gitignore` parse problems, for the CLI to print.
@@ -85,6 +121,19 @@ impl Excluder {
     }
 }
 
+/// Falling back to the path as given when canonicalization fails silently
+/// disables every gitignore rule for this `Excluder` — the `starts_with`
+/// guards in `is_excluded`/`matched` then compare a non-canonical path
+/// against canonical matcher roots (e.g. macOS `/tmp` vs `/private/tmp`) and
+/// never match. That is inert today, not by construction: every real call
+/// site constructs the `Excluder` and then immediately calls
+/// `render_core::site::build_site`, whose own `WalkDir::new(docs_dir)` hard-
+/// errors on the very first entry when `docs_dir` is unreadable or absent —
+/// the same condition that would make `canonicalize` fail here. So a broken
+/// canonicalization never survives to decide anything; the build stops
+/// first. If a future call site ever uses an `Excluder` without going
+/// through `build_site` right after, this fallback becomes a live way to
+/// silently stop respecting `.gitignore`.
 fn canonical(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
 }
@@ -119,12 +168,22 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// Every `.gitignore` that can govern a path under `docs_dir`: the repo root,
 /// each directory between it and `docs_dir`, and each directory beneath it.
 ///
-/// Deliberately not "every directory under `project_dir`" — that walks `target/`,
-/// which Cargo seeds with its own `.gitignore` containing `*`.
+/// Deliberately not "every directory under `project_dir`" — that would walk
+/// `target/`, which Cargo seeds with its own `.gitignore` containing `*`. This
+/// only avoids that in practice when `docs_dir` is a subdir of `project_dir`
+/// (the common case, e.g. `docs/`). In the no-config bare-Markdown-folder
+/// default, `docs_dir == project_dir`, so the walk below descends `target/`,
+/// `.git/`, and `.claude/worktrees/` the same as any other directory. That is
+/// harmless, not a correctness gap: `build_site` walks that exact same tree
+/// to render it, so collecting their `.gitignore` files costs nothing extra
+/// and `target/`'s own `*` rule is simply one more (unreachable, since
+/// `target/` sits outside any `docs_dir` a site would render) matcher.
 ///
-/// A `.gitignore` *inside* an already-ignored directory is collected too. That is
-/// wasted but harmless: everything under it is excluded by the ancestor rule
-/// regardless, and pruning would need the matchers we are still building.
+/// A `.gitignore` *inside* an already-ignored directory is collected too.
+/// That is wasted but harmless: `Excluder::is_excluded` prunes at the first
+/// ignored ancestor directory before ever consulting a deeper matcher, so a
+/// nested `.gitignore` built here for a path under an ignored directory is
+/// built but never reached at match time.
 fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec<String>) {
     let mut dirs: Vec<PathBuf> = docs_dir
         .ancestors()
@@ -284,15 +343,66 @@ mod tests {
     }
 
     #[test]
-    fn negation_in_deeper_file_wins() {
+    fn negation_cannot_re_include_under_an_ignored_dir() {
+        // Git: "it is not possible to re-include a file if a parent directory
+        // of that file is excluded." `docs/gen/` is ignored by the root
+        // `.gitignore`, so git prunes there — it never even reads the nested
+        // `docs/gen/.gitignore`'s `!keep.md`, and `git check-ignore` reports
+        // `gen/keep.md` as IGNORED (via the root rule), not whitelisted.
         let d = project("gi-negate", true);
         write(&d, ".gitignore", "docs/gen/\n");
         write(&d, "docs/gen/.gitignore", "!keep.md\n");
         write(&d, "docs/gen/keep.md", "x");
         write(&d, "docs/gen/other.md", "x");
         let e = Excluder::new(&d, &d.join("docs"), &[]);
-        assert!(!e.is_excluded(Path::new("gen/keep.md")));
+        assert!(e.is_excluded(Path::new("gen/keep.md")));
         assert!(e.is_excluded(Path::new("gen/other.md")));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn negation_cannot_re_include_a_single_ignored_file() {
+        // Same rule, the more common shape: a directory is ignored and a
+        // later line in the *same* file tries to re-include one file inside
+        // it. Git still prunes at the directory and never reaches the `!`
+        // line — `git check-ignore -v` reports this IGNORED via the
+        // `docs/priv/` rule, not the `!docs/priv/index.md` one.
+        let d = project("gi-negate-single", true);
+        write(&d, ".gitignore", "docs/priv/\n!docs/priv/index.md\n");
+        write(&d, "docs/priv/index.md", "x");
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        assert!(e.is_excluded(Path::new("priv/index.md")));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn negation_works_when_no_ancestor_directory_is_ignored() {
+        // The positive case: git *does* honor a `!negation` when nothing
+        // above the file is excluded. This must keep working — the fix for
+        // the two tests above must not turn `!` into a no-op generally.
+        let d = project("gi-negate-plain", true);
+        write(&d, ".gitignore", "docs/*.md\n!docs/keep.md\n");
+        write(&d, "docs/keep.md", "x");
+        write(&d, "docs/other.md", "x");
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        assert!(!e.is_excluded(Path::new("keep.md")));
+        assert!(e.is_excluded(Path::new("other.md")));
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn exclude_pattern_wins_over_gitignore_negation() {
+        // `exclude` is compositor's own config; git's `!negation` has no say
+        // over it (see the comment in `is_excluded`). The `.gitignore` here
+        // has a real, applicable `!x/y.md` whitelist for this exact path
+        // (no ignored ancestor directory is in play), so this isolates the
+        // `exclude`-vs-`!` precedence specifically: without the `exclude`
+        // wins-first rule, the whitelist would keep the file.
+        let d = project("gi-negate-vs-exclude", true);
+        write(&d, "docs/.gitignore", "!x/y.md\n");
+        write(&d, "docs/x/y.md", "x");
+        let e = Excluder::new(&d, &d.join("docs"), &["x/".to_string()]);
+        assert!(e.is_excluded(Path::new("x/y.md")));
         let _ = fs::remove_dir_all(&d);
     }
 
