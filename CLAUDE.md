@@ -163,8 +163,13 @@ bug and "fixed" against the reasoning that deferred it.
   - **Writes are authorized by a server-built url→source map, never a client-named path.**
     `/__edit` accepts only a url already in `ServedSite.editable` and writes exactly the
     file that map recorded, atomically (temp-write + rename); a url with no backing source
-    (a generated index) or off the map is refused. The embedding surface is writable by
-    default with a read-only opt-out — see below.
+    (a generated index) or off the map is refused. The map holds **only pages that carry an
+    editor** (`edit_source.is_some()`), so a read-only page's url is refused too — the map
+    *is* the write boundary. `/__edit` also enforces **same-origin** (`Sec-Fetch-Site`
+    `same-origin`/`none`, or `Origin` authority matching `Host`; a non-browser client sending
+    neither is allowed): editing is on by default on loopback, so this closes the
+    cross-origin-`fetch` vector a hostile page could otherwise use against the loopback port.
+    The embedding surface is writable by default with a read-only opt-out — see below.
 
 ## Layout
 
