@@ -2,9 +2,9 @@ use crate::config::SiteConfig;
 use anyhow::Result;
 use askama::Template;
 use render_core::frontmatter::split_frontmatter;
-use render_core::markdown::{render_markdown, ImageResolver, TocEntry};
+use render_core::markdown::{render_markdown, render_markdown_editable, ImageResolver, TocEntry};
 use render_core::nav::{flatten, NavLink, NavNode, NavTree};
-use render_core::site::{Page, SiteModel};
+use render_core::site::{EditSource, Page, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -180,6 +180,7 @@ pub fn resolve_home(
     cfg: &SiteConfig,
     project_dir: &Path,
     images: &dyn ImageResolver,
+    edit: bool,
 ) -> Result<Option<Page>> {
     if site.pages.iter().any(|p| p.url == "index.html") {
         return Ok(None);
@@ -200,7 +201,7 @@ pub fn resolve_home(
     // root (a bare Markdown folder), a root README is already a docs page and
     // was handled by the promotion loop above.
     if cfg.docs_path(project_dir) != project_dir {
-        if let Some(home) = repo_readme_home(project_dir, &cfg.site_name, images)? {
+        if let Some(home) = repo_readme_home(project_dir, &cfg.site_name, images, edit)? {
             return Ok(Some(home));
         }
     }
@@ -216,6 +217,7 @@ fn repo_readme_home(
     project_dir: &Path,
     site_name: &str,
     images: &dyn ImageResolver,
+    edit: bool,
 ) -> Result<Option<Page>> {
     let Some(path) = find_repo_root_md(project_dir, "readme") else {
         return Ok(None);
@@ -229,14 +231,34 @@ fn repo_readme_home(
     // *images* are a different matter — they resolve against the repo root and
     // either exist on disk or don't, so `images` carries the build's real
     // policy and a dead one still fails a strict build.
-    let rendered = render_markdown(
-        &body,
-        Path::new(""),
-        &HashSet::new(),
-        &render_core::wikilink::WikiIndex::new(),
-        LinkPolicy::Lenient,
-        images,
-    )?;
+    let (rendered, edit_source) = if edit {
+        let (rendered, line_map) = render_markdown_editable(
+            &body,
+            Path::new(""),
+            &HashSet::new(),
+            &render_core::wikilink::WikiIndex::new(),
+            LinkPolicy::Lenient,
+            images,
+        )?;
+        let fm_lines = raw[..raw.len() - body.len()].lines().count();
+        let es = EditSource {
+            source: raw.clone(),
+            fm_lines,
+            line_map,
+            path,
+        };
+        (rendered, Some(es))
+    } else {
+        let rendered = render_markdown(
+            &body,
+            Path::new(""),
+            &HashSet::new(),
+            &render_core::wikilink::WikiIndex::new(),
+            LinkPolicy::Lenient,
+            images,
+        )?;
+        (rendered, None)
+    };
     let title = fm
         .title
         .or(rendered.first_h1)
@@ -247,7 +269,7 @@ fn repo_readme_home(
         title,
         html: rendered.html,
         toc: rendered.toc,
-        edit_source: None,
+        edit_source,
     }))
 }
 
@@ -284,6 +306,7 @@ fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
 /// a `# <projectname>` H1 the normal title chain would wrongly surface as the label.
 /// Links render leniently (outside the docs link contract); images follow `images`,
 /// the build's real policy, so a dead one still fails a strict build.
+#[allow(clippy::too_many_arguments)]
 fn surface_repo_instruction_file(
     site: &mut SiteModel,
     cfg: &SiteConfig,
@@ -292,6 +315,7 @@ fn surface_repo_instruction_file(
     label: &str,
     after: Option<&str>,
     skip_if_content_eq: Option<&str>,
+    edit: bool,
 ) -> Result<Option<String>> {
     let stem = label.to_ascii_lowercase();
     let url = format!("{label}.html");
@@ -314,21 +338,43 @@ fn surface_repo_instruction_file(
         return Ok(None);
     }
     let (_fm, body) = split_frontmatter(&raw);
-    let rendered = render_markdown(
-        &body,
-        Path::new(""),
-        &HashSet::new(),
-        &render_core::wikilink::WikiIndex::new(),
-        LinkPolicy::Lenient,
-        images,
-    )?;
+    let (rendered, edit_source) = if edit {
+        let (rendered, line_map) = render_markdown_editable(
+            &body,
+            Path::new(""),
+            &HashSet::new(),
+            &render_core::wikilink::WikiIndex::new(),
+            LinkPolicy::Lenient,
+            images,
+        )?;
+        let fm_lines = raw[..raw.len() - body.len()].lines().count();
+        (
+            rendered,
+            Some(EditSource {
+                source: raw.clone(),
+                fm_lines,
+                line_map,
+                path,
+            }),
+        )
+    } else {
+        let rendered = render_markdown(
+            &body,
+            Path::new(""),
+            &HashSet::new(),
+            &render_core::wikilink::WikiIndex::new(),
+            LinkPolicy::Lenient,
+            images,
+        )?;
+        (rendered, None)
+    };
     site.pages.push(Page {
         url: url.clone(),
         rel_path: PathBuf::from(format!("{label}.md")),
         title: label.to_string(),
         html: rendered.html,
         toc: rendered.toc,
-        edit_source: None,
+        edit_source,
     });
     // Insert adjacent to Home: right after a leading `index.html` page if the nav
     // has one, else first. When `after` names the url now sitting at that spot (the
@@ -370,9 +416,10 @@ pub fn surface_repo_agent_files(
     cfg: &SiteConfig,
     project_dir: &Path,
     images: &dyn ImageResolver,
+    edit: bool,
 ) -> Result<()> {
     let claude_raw = if cfg.surface_claude_md() {
-        surface_repo_instruction_file(site, cfg, project_dir, images, "CLAUDE", None, None)?
+        surface_repo_instruction_file(site, cfg, project_dir, images, "CLAUDE", None, None, edit)?
     } else {
         None
     };
@@ -390,6 +437,7 @@ pub fn surface_repo_agent_files(
             "AGENTS",
             after,
             claude_raw.as_deref(),
+            edit,
         )?;
     }
     Ok(())
@@ -540,19 +588,29 @@ mod tests {
     fn no_home_added_when_index_exists() {
         let s = site(vec![page("index.md", "index.html", "x")]);
         // Short-circuits before touching the filesystem, so any path works.
-        assert!(
-            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
-                .unwrap()
-                .is_none()
-        );
+        assert!(resolve_home(
+            &s,
+            &cfg_named("S"),
+            Path::new("/nonexistent"),
+            &no_images(),
+            false
+        )
+        .unwrap()
+        .is_none());
     }
 
     #[test]
     fn docs_tree_readme_is_promoted_to_home_any_case() {
         let s = site(vec![page("README.md", "README.html", "readme body")]);
-        let home = resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
-            .unwrap()
-            .unwrap();
+        let home = resolve_home(
+            &s,
+            &cfg_named("S"),
+            Path::new("/nonexistent"),
+            &no_images(),
+            false,
+        )
+        .unwrap()
+        .unwrap();
         assert_eq!(home.url, "index.html");
         assert_eq!(home.html, "readme body");
     }
@@ -564,10 +622,16 @@ mod tests {
             page("home.md", "home.html", "H"),
         ]);
         assert_eq!(
-            resolve_home(&s, &cfg_named("S"), Path::new("/nonexistent"), &no_images())
-                .unwrap()
-                .unwrap()
-                .html,
+            resolve_home(
+                &s,
+                &cfg_named("S"),
+                Path::new("/nonexistent"),
+                &no_images(),
+                false
+            )
+            .unwrap()
+            .unwrap()
+            .html,
             "H"
         );
     }
@@ -577,7 +641,7 @@ mod tests {
         let tmp = scratch("repo-readme");
         std::fs::write(tmp.join("README.md"), "# Welcome\n\nhello world").unwrap();
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), false)
             .unwrap()
             .unwrap();
         assert_eq!(home.url, "index.html");
@@ -591,7 +655,7 @@ mod tests {
         let tmp = scratch("repo-readme-case");
         std::fs::write(tmp.join("readme.md"), "# Casing\n\nbody").unwrap();
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), false)
             .unwrap()
             .unwrap();
         assert_eq!(home.title, "Casing");
@@ -604,7 +668,7 @@ mod tests {
         let tmp = scratch("docs-beats-repo");
         std::fs::write(tmp.join("README.md"), "# Repo\n\nrepo body").unwrap();
         let s = site(vec![page("home.md", "home.html", "docs home body")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), false)
             .unwrap()
             .unwrap();
         assert_eq!(home.html, "docs home body");
@@ -616,7 +680,7 @@ mod tests {
         // No docs landing and no repo-root README -> a generated index, not blank.
         let tmp = scratch("gen-index");
         let s = site(vec![page("guide.md", "guide.html", "g")]);
-        let home = resolve_home(&s, &cfg_named("My Site"), &tmp, &no_images())
+        let home = resolve_home(&s, &cfg_named("My Site"), &tmp, &no_images(), false)
             .unwrap()
             .unwrap();
         assert_eq!(home.url, "index.html");
@@ -631,7 +695,7 @@ mod tests {
         // repo-root README either, the home is the generated index.
         let tmp = scratch("nested-readme");
         let s = site(vec![page("sub/readme.md", "sub/readme.html", "R")]);
-        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images())
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), false)
             .unwrap()
             .unwrap();
         assert!(!home.html.contains("R"));
@@ -646,7 +710,7 @@ mod tests {
         // from it, or the menu would read "compositor" instead of "CLAUDE".
         std::fs::write(tmp.join("CLAUDE.md"), "# compositor\n\nagent notes").unwrap();
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
 
         let p = s
             .pages
@@ -671,7 +735,7 @@ mod tests {
         let tmp = scratch("repo-claude-case");
         std::fs::write(tmp.join("claude.md"), "lower body").unwrap();
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         assert!(s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -680,7 +744,7 @@ mod tests {
     fn no_claude_surfaced_when_absent() {
         let tmp = scratch("repo-no-claude");
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         assert!(s.nav.0.is_empty());
         std::fs::remove_dir_all(&tmp).ok();
@@ -693,7 +757,7 @@ mod tests {
         let tmp = scratch("repo-claude-dup");
         std::fs::write(tmp.join("CLAUDE.md"), "repo root claude").unwrap();
         let mut s = site(vec![page("CLAUDE.md", "CLAUDE.html", "docs-tree claude")]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         let claude: Vec<_> = s.pages.iter().filter(|p| p.url == "CLAUDE.html").collect();
         assert_eq!(claude.len(), 1, "no duplicate CLAUDE.html");
         assert_eq!(claude[0].html, "docs-tree claude", "docs-tree page kept");
@@ -713,7 +777,7 @@ mod tests {
                 url: "index.html".into(),
             },
         );
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         // Order: index.html, then CLAUDE.html.
         match (&s.nav.0[0], &s.nav.0[1]) {
             (NavNode::Page { url: u0, .. }, NavNode::Page { url: u1, .. }) => {
@@ -746,7 +810,7 @@ mod tests {
                 url: "AGENTS.html".into(),
             },
         ]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         let urls: Vec<&str> = s
             .nav
             .0
@@ -772,7 +836,7 @@ mod tests {
             ..SiteConfig::default()
         };
         let mut s = site(vec![page("guide.md", "guide.html", "g")]);
-        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1061,7 +1125,7 @@ mod tests {
         let tmp = scratch("repo-agents");
         std::fs::write(tmp.join("AGENTS.md"), "# proj\n\nagent notes").unwrap();
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         let p = s
             .pages
             .iter()
@@ -1080,7 +1144,7 @@ mod tests {
         let tmp = scratch("repo-agents-case");
         std::fs::write(tmp.join("agents.md"), "lower body").unwrap();
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         assert!(s.pages.iter().any(|p| p.url == "AGENTS.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1091,7 +1155,7 @@ mod tests {
         std::fs::write(tmp.join("CLAUDE.md"), "claude body").unwrap();
         std::fs::write(tmp.join("AGENTS.md"), "agents body").unwrap();
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         let urls: Vec<&str> = s
             .nav
             .0
@@ -1111,7 +1175,7 @@ mod tests {
         std::fs::write(tmp.join("CLAUDE.md"), "same body").unwrap();
         std::fs::write(tmp.join("AGENTS.md"), "same body").unwrap();
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         assert!(s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         assert!(
             !s.pages.iter().any(|p| p.url == "AGENTS.html"),
@@ -1130,7 +1194,7 @@ mod tests {
             ..cfg_named("S")
         };
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         assert!(
             s.pages.iter().any(|p| p.url == "AGENTS.html"),
@@ -1148,7 +1212,7 @@ mod tests {
             ..cfg_named("S")
         };
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "AGENTS.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1162,7 +1226,7 @@ mod tests {
             ..cfg_named("S")
         };
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
         std::fs::remove_dir_all(&tmp).ok();
     }
@@ -1172,7 +1236,7 @@ mod tests {
         let tmp = scratch("repo-agents-dup");
         std::fs::write(tmp.join("AGENTS.md"), "repo root agents").unwrap();
         let mut s = site(vec![page("AGENTS.md", "AGENTS.html", "docs-tree agents")]);
-        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), false).unwrap();
         let agents: Vec<_> = s.pages.iter().filter(|p| p.url == "AGENTS.html").collect();
         assert_eq!(agents.len(), 1, "no duplicate AGENTS.html");
         assert_eq!(agents[0].html, "docs-tree agents", "docs-tree page kept");
@@ -1188,8 +1252,57 @@ mod tests {
             ..cfg_named("S")
         };
         let mut s = site(vec![]);
-        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images(), false).unwrap();
         assert!(!s.pages.iter().any(|p| p.url == "AGENTS.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_readme_home_is_editable_under_edit() {
+        let tmp = scratch("repo-readme-edit");
+        std::fs::write(tmp.join("README.md"), "# Project\n\nintro\n").unwrap();
+        let s = site(vec![page("guide.md", "guide.html", "g")]);
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), true)
+            .unwrap()
+            .unwrap();
+        let es = home.edit_source.as_ref().expect("editable under edit");
+        assert_eq!(es.path, tmp.join("README.md"));
+        assert_eq!(es.source, "# Project\n\nintro\n");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_readme_home_is_readonly_without_edit() {
+        let tmp = scratch("repo-readme-readonly");
+        std::fs::write(tmp.join("README.md"), "# Project\n").unwrap();
+        let s = site(vec![page("guide.md", "guide.html", "g")]);
+        let home = resolve_home(&s, &cfg_named("S"), &tmp, &no_images(), false)
+            .unwrap()
+            .unwrap();
+        assert!(
+            home.edit_source.is_none(),
+            "build/false path carries no editor"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn surfaced_claude_agents_are_editable_under_edit() {
+        let tmp = scratch("repo-claude-agents-edit");
+        std::fs::write(tmp.join("CLAUDE.md"), "# C\n\nc\n").unwrap();
+        std::fs::write(tmp.join("AGENTS.md"), "# A\n\na\n").unwrap();
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images(), true).unwrap();
+        let claude = s.pages.iter().find(|p| p.url == "CLAUDE.html").unwrap();
+        let agents = s.pages.iter().find(|p| p.url == "AGENTS.html").unwrap();
+        assert_eq!(
+            claude.edit_source.as_ref().unwrap().path,
+            tmp.join("CLAUDE.md")
+        );
+        assert_eq!(
+            agents.edit_source.as_ref().unwrap().path,
+            tmp.join("AGENTS.md")
+        );
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

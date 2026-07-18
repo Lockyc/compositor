@@ -24,10 +24,10 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     // images against the repo root; `images` records what must be copied.
     let images = crate::root_assets::RootAssets::new(project_dir, &docs, &excluder, policy);
     // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
-    crate::render_page::surface_repo_agent_files(&mut site, &cfg, project_dir, &images)?;
+    crate::render_page::surface_repo_agent_files(&mut site, &cfg, project_dir, &images, false)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
-    // working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images)?;
+    // working `/` (see `resolve_home`). `build` ships no edit scaffolding.
+    let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images, false)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
     for page in site.pages.iter().chain(home.as_ref()) {
         let (prev, next) = crate::render_page::neighbours(&order, &page.url);

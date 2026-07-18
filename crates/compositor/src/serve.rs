@@ -160,9 +160,9 @@ pub(crate) fn build_pages(
     let images =
         crate::root_assets::RootAssets::new(project_dir, &docs, excluder, LinkPolicy::Lenient);
     // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
-    crate::render_page::surface_repo_agent_files(site, cfg, project_dir, &images)?;
+    crate::render_page::surface_repo_agent_files(site, cfg, project_dir, &images, edit_enabled)?;
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(site, cfg, project_dir, &images)?;
+    let home = crate::render_page::resolve_home(site, cfg, project_dir, &images, edit_enabled)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
 
     let mut editable = HashMap::new();
