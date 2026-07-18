@@ -401,6 +401,13 @@
     return s.split("\n");
   }
 
+  // A line is "blank" if it holds only whitespace (empty, spaces/tabs, or a lone
+  // `\r` from a CRLF file). Used to peel the trailing blank-line run comrak folds
+  // into a block's sourcepos so range-replacement preserves it verbatim.
+  function isBlankLine(line) {
+    return line.trim() === "";
+  }
+
   // The literal source text for a "a-b" (1-based, inclusive FILE lines) range.
   function rangeSourceText(rangeStr) {
     var r = parseRange(rangeStr);
@@ -477,11 +484,28 @@
     });
     for (var e = 0; e < edits.length; e++) {
       var ed = edits[e];
+      var count = ed.b - ed.a + 1; // 1-based inclusive [a,b] -> line count
+      var original = lines.slice(ed.a - 1, ed.a - 1 + count);
+      // Peel the trailing run of blank lines off the ORIGINAL span and keep it
+      // verbatim. comrak's sourcepos for a list (and some other blocks) includes
+      // the blank separator line that follows it; the serialized replacement has
+      // no such trailer, so re-appending the peeled blanks preserves the byte-
+      // exact spacing between this block and the untouched one after it. A block
+      // whose span has no trailing blank (a one-line paragraph/heading) peels an
+      // empty trailer and is unaffected. Whitespace-only counts as blank; a `\r`
+      // (CRLF) or spaces ride along untouched, never normalized.
+      var trailerStart = original.length;
+      while (trailerStart > 0 && isBlankLine(original[trailerStart - 1])) {
+        trailerStart--;
+      }
+      var trailer = original.slice(trailerStart);
       // A region that serializes to nothing (every block deleted/emptied)
-      // removes its source lines entirely: splice with no inserts.
-      var replacement = ed.text.length ? splitLines(ed.text) : [];
-      // 1-based inclusive [a,b] -> 0-based splice(start=a-1, count=b-a+1).
-      lines.splice(ed.a - 1, ed.b - ed.a + 1, ...replacement);
+      // removes its source lines entirely -- trailer and all -- rather than
+      // stranding orphan blank lines: splice with no inserts.
+      var replacement = ed.text.length
+        ? splitLines(ed.text).concat(trailer)
+        : [];
+      lines.splice(ed.a - 1, count, ...replacement);
     }
     return lines.join("\n");
   }
