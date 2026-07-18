@@ -167,15 +167,18 @@ pub(crate) fn build_pages(
 
     let mut editable = HashMap::new();
     if edit_enabled {
-        // Exactly the pages that carry an editor: `edit_source: Some`, which in
-        // v1 is the docs-tree pages, whose `rel_path` is real relative to the
-        // docs dir. Read-only pages (the promoted repo-root README home, the
-        // surfaced CLAUDE/AGENTS nav pages, the generated index) are
-        // `edit_source: None` and so never enter the map — `/__edit` can then
-        // never write a page that has no editor.
-        for p in &site.pages {
-            if p.edit_source.is_some() {
-                editable.insert(p.url.clone(), docs.join(&p.rel_path));
+        // Exactly the pages that carry an editor: `edit_source: Some`. The
+        // home page comes back from `resolve_home` *separately* from
+        // `site.pages`, so it must be chained in here or a future editable
+        // home (a repo-root README) could never enter the map. The write
+        // target is `EditSource.path` — the single source, addressing files
+        // both inside the docs dir and outside it (repo-root pages). Read-only
+        // pages (the generated index, the promoted docs-root `/`-alias) stay
+        // `edit_source: None` and never enter the map, so `/__edit` can never
+        // write a page that carries no editor.
+        for p in site.pages.iter().chain(home.as_ref()) {
+            if let Some(es) = &p.edit_source {
+                editable.insert(p.url.clone(), es.path.clone());
             }
         }
     }
