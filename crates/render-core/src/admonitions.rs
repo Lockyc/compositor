@@ -19,15 +19,35 @@ struct Opener {
 }
 
 pub fn preprocess_admonitions(src: &str) -> String {
+    preprocess_admonitions_mapped(src).0
+}
+
+/// Append `s` (which may itself contain internal newlines) to `out` as one or
+/// more output lines, each mapped to `origin` in `map`. `s` must not carry a
+/// trailing newline — callers pass line-shaped fragments only.
+fn push_mapped(out: &mut String, map: &mut Vec<Option<usize>>, s: &str, origin: Option<usize>) {
+    for line in s.split('\n') {
+        out.push_str(line);
+        out.push('\n');
+        map.push(origin);
+    }
+}
+
+/// Same preprocessing as [`preprocess_admonitions`], plus a per-output-line
+/// map back to the source line it came from (`None` for a synthesized
+/// admonition-wrapper line). The recursion for nested admonitions only needs
+/// the string form — nested wrapper output is entirely synthesized from the
+/// outer view regardless, so those lines are already `None` here.
+pub fn preprocess_admonitions_mapped(src: &str) -> (String, Vec<Option<usize>>) {
     let lines: Vec<&str> = src.lines().collect();
     let mut out = String::new();
+    let mut map: Vec<Option<usize>> = Vec::new();
     let mut i = 0;
     let mut fence: Option<(char, usize)> = None;
     while i < lines.len() {
         let line = lines[i];
         if let Some((fc, flen)) = fence {
-            out.push_str(line);
-            out.push('\n');
+            push_mapped(&mut out, &mut map, line, Some(i));
             if is_fence_close(line, fc, flen) {
                 fence = None;
             }
@@ -36,8 +56,7 @@ pub fn preprocess_admonitions(src: &str) -> String {
         }
         if let Some(open) = fence_open(line) {
             fence = Some(open);
-            out.push_str(line);
-            out.push('\n');
+            push_mapped(&mut out, &mut map, line, Some(i));
             i += 1;
             continue;
         }
@@ -60,23 +79,25 @@ pub fn preprocess_admonitions(src: &str) -> String {
                 body_lines.pop();
             }
             let body_src = body_lines.join("\n");
-            let body = preprocess_admonitions(&body_src); // recurse for nesting
+            let body = preprocess_admonitions(&body_src); // string-only recursion; nested output is synthesized regardless
                                                           // A leading blank line guarantees the wrapper starts a fresh HTML block.
             if !out.is_empty() && !out.ends_with("\n\n") {
                 out.push('\n');
+                map.push(None);
             }
-            out.push_str(&render_wrapper(&op, body.trim_end()));
+            let wrapper = render_wrapper(&op, body.trim_end());
+            push_mapped(&mut out, &mut map, wrapper.trim_end_matches('\n'), None);
             if j < lines.len() {
                 out.push('\n');
+                map.push(None);
             }
             i = j;
             continue;
         }
-        out.push_str(line);
-        out.push('\n');
+        push_mapped(&mut out, &mut map, line, Some(i));
         i += 1;
     }
-    out
+    (out, map)
 }
 
 fn deindent4(line: &str) -> Option<&str> {
@@ -365,5 +386,28 @@ mod tests {
             out.contains("<summary class=\"admonition-title\">Note</summary>"),
             "{out}"
         );
+    }
+
+    #[test]
+    fn line_map_is_identity_without_admonitions() {
+        let (out, map) = preprocess_admonitions_mapped("# A\n\npara\n\n- x\n");
+        assert_eq!(out, "# A\n\npara\n\n- x\n");
+        // Every output line maps back to the same source line.
+        assert_eq!(map, vec![Some(0), Some(1), Some(2), Some(3), Some(4)]);
+    }
+
+    #[test]
+    fn line_map_marks_admonition_lines_none_and_keeps_trailing_mapping() {
+        let src = "intro\n\n!!! note\n    body\n\nafter\n";
+        let (_out, map) = preprocess_admonitions_mapped(src);
+        // "intro" maps to source line 0.
+        assert_eq!(map[0], Some(0));
+        // The admonition-wrapper output lines are synthesized.
+        assert!(map.iter().any(|m| m.is_none()));
+        // "after" (source line 5) is still recoverable somewhere in the map: no
+        // passthrough line after the admonition may map to the wrong source line.
+        assert!(map.contains(&Some(5)));
+        // No passthrough line ever points past the last real source line.
+        assert!(map.iter().flatten().all(|&s| s <= 5));
     }
 }
