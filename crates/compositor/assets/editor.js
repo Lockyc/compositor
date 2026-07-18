@@ -208,6 +208,16 @@
           // rather than the browser-resolved absolute one.
           var href = n.getAttribute("href") || "";
           out += "[" + serializeInline(n) + "](" + href + ")";
+        } else if (tag === "IMG") {
+          // An <img> has no children -- serialize its attributes directly, the
+          // mirror of the A case. getAttribute keeps whatever src the DOM holds
+          // (compositor rewrites image URLs at render, but an edit round-trip
+          // must emit the current src, not a browser-resolved absolute one).
+          var isrc = n.getAttribute("src") || "";
+          var alt = n.getAttribute("alt") || "";
+          out += "![" + alt + "](" + isrc + ")";
+        } else if (tag === "DEL" || tag === "S") {
+          out += "~~" + serializeInline(n) + "~~";
         } else if (tag === "BR") {
           out += "\n";
         } else {
@@ -250,9 +260,49 @@
       if (kids[i].tagName !== "LI") continue;
       n++;
       var marker = ordered ? n + ". " : "- ";
-      out.push(marker + serializeInline(kids[i]));
+      out.push(marker + serializeListItem(kids[i]));
     }
     return out.join("\n");
+  }
+
+  // Serialize one <li>'s content. A GFM task item renders as a leading
+  // `<input type="checkbox">` (comrak: `checked`/`disabled` present when
+  // ticked) followed by the item text; detect it and emit the `[x]`/`[ ]`
+  // token, dropping the input. serializeInline already drops the input itself
+  // (unknown element, no children -> ""), so its content is just the text --
+  // trim its leading space so `<input> done` round-trips to `[x] done`, not a
+  // double space. A normal item has no leading checkbox and is unchanged.
+  function serializeListItem(li) {
+    var cb = leadingCheckbox(li);
+    var body = serializeInline(li);
+    if (cb) {
+      return "[" + (cb.checked ? "x" : " ") + "] " + body.replace(/^\s+/, "");
+    }
+    return body;
+  }
+
+  // If the first meaningful child of `li` is a checkbox input, return
+  // { checked }; otherwise null. Leading whitespace-only text is skipped; any
+  // other leading node means it's not a task item.
+  function leadingCheckbox(li) {
+    var kids = li.childNodes;
+    for (var i = 0; i < kids.length; i++) {
+      var n = kids[i];
+      if (n.nodeType === 3) {
+        if (n.nodeValue.trim() === "") continue;
+        return null;
+      }
+      if (n.nodeType === 1) {
+        if (
+          n.tagName === "INPUT" &&
+          (n.getAttribute("type") || "").toLowerCase() === "checkbox"
+        ) {
+          return { checked: n.hasAttribute("checked") || n.checked === true };
+        }
+        return null;
+      }
+    }
+    return null;
   }
 
   function serializeBlockquote(el) {
@@ -282,31 +332,58 @@
     var rows = [];
     // Header row: prefer THEAD, fall back to the first row.
     var head = el.querySelector("thead tr");
-    var headCells = head ? cellsOf(head) : [];
+    var headCells = head ? cellElementsOf(head) : [];
     if (headCells.length === 0) return el.textContent; // degrade, not throw
-    rows.push(pipeRow(headCells));
     rows.push(
       pipeRow(
-        headCells.map(function () {
-          return "---";
+        headCells.map(function (c) {
+          return serializeInline(c);
         })
       )
     );
+    // The GFM separator row carries per-column alignment, which comrak emits on
+    // the header cells (verified: an `align="left|center|right"` attribute; a
+    // `style="text-align:..."` is handled too for robustness). No alignment
+    // keeps the plain `---`.
+    rows.push(pipeRow(headCells.map(alignMarker)));
     var bodyRows = el.querySelectorAll("tbody tr");
     for (var i = 0; i < bodyRows.length; i++) {
-      rows.push(pipeRow(cellsOf(bodyRows[i])));
+      rows.push(
+        pipeRow(
+          cellElementsOf(bodyRows[i]).map(function (c) {
+            return serializeInline(c);
+          })
+        )
+      );
     }
     return rows.join("\n");
   }
 
-  function cellsOf(tr) {
+  function cellElementsOf(tr) {
     var out = [];
     var kids = tr.children;
     for (var i = 0; i < kids.length; i++) {
       var t = kids[i].tagName;
-      if (t === "TH" || t === "TD") out.push(serializeInline(kids[i]));
+      if (t === "TH" || t === "TD") out.push(kids[i]);
     }
     return out;
+  }
+
+  // The GFM alignment marker for a header cell: left `:--`, center `:-:`,
+  // right `--:`, none `---`. Reads comrak's `align` attribute, falling back to
+  // a `text-align` in an inline style.
+  function alignMarker(cell) {
+    var a = (cell.getAttribute("align") || "").toLowerCase();
+    if (!a) {
+      var m = /text-align:\s*(left|center|right)/i.exec(
+        cell.getAttribute("style") || ""
+      );
+      if (m) a = m[1].toLowerCase();
+    }
+    if (a === "left") return ":--";
+    if (a === "center") return ":-:";
+    if (a === "right") return "--:";
+    return "---";
   }
 
   function pipeRow(cells) {
