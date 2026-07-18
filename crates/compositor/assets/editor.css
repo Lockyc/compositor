@@ -1,3 +1,67 @@
-/* Inline-editing UI stub. Real styling lands in Task 7 (edit toggle + panel). */
-.edit-toggle {
+/* Inline-editing UI — served only on a loopback `serve` (see
+   `ServedSite::edit_enabled` / `assets::EDITOR_CSS_URL`). Layered after
+   compositor.css, so it inherits the same Pico custom-property tokens and
+   must never hardcode a colour: light/dark both fall out of reusing
+   `--pico-primary`/`--pico-muted-*` exactly as the shell does. */
+
+/* --- Edit toggle: a third topbar control, same accent-outline treatment as
+   `.theme-toggle`/`.nav-toggle` (shared selector, not a duplicated ruleset —
+   drifting this one out of sync with its siblings is the failure mode this
+   avoids). `[aria-pressed="true"]` (set by editor.js once editing is on)
+   flips it to a filled state so "editing is ON" reads at a glance, matching
+   the same filled look the siblings only show on hover. */
+.topbar .edit-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.4rem;
+  box-sizing: border-box;
+  height: 2.15rem;
+  width: auto;
+  margin: 0;
+  padding: 0 0.7rem;
+  font-size: 0.95rem;
+  line-height: 1;
+  background: transparent;
+  border: 1px solid var(--pico-primary);
+  border-radius: var(--pico-border-radius);
+  color: var(--pico-primary);
+  cursor: pointer;
+}
+.topbar .edit-toggle:hover {
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse);
+}
+.topbar .edit-toggle[aria-pressed="true"] {
+  background: var(--pico-primary);
+  color: var(--pico-primary-inverse);
+}
+
+/* --- Editable content, while editing is on. Quiet at rest (no permanent
+   border/box so reading an untouched page looks the same as always); a
+   faint hover cue invites the click, a stronger focus outline confirms
+   "you are now editing this block". Both reuse the accent tokens the rest
+   of the shell already keys its focus rings off. */
+body.editing [contenteditable="true"] {
+  border-radius: var(--pico-border-radius);
+  outline-offset: 2px;
+  transition: outline-color 0.1s ease, background-color 0.1s ease;
+}
+body.editing [contenteditable="true"]:hover {
+  outline: 1px dashed var(--pico-primary);
+  background: color-mix(in srgb, var(--pico-primary) 5%, transparent);
+}
+body.editing [contenteditable="true"]:focus {
+  outline: 2px solid var(--pico-primary);
+  background: var(--pico-primary-focus);
+}
+
+/* --- Explicitly non-editable regions (code, admonitions, wikilink-dense
+   blocks — whatever editor.js marks `data-noedit`). Muted + not-allowed so
+   the block reads as deliberately excluded, not broken. */
+body.editing [data-noedit] {
+  cursor: not-allowed;
+  outline: 1px dashed var(--pico-muted-border-color);
+  outline-offset: 2px;
+  background: color-mix(in srgb, var(--pico-muted-color) 6%, transparent);
 }
