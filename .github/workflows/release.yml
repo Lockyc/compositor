@@ -28,7 +28,7 @@ jobs:
   linux-binary:
     runs-on: ubuntu-22.04 # conservative glibc for the Debian LXC build hosts
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           # Build the tagged commit, not the default branch. They are normally the
           # same commit, but "normally" is not a guarantee worth shipping a binary on.
