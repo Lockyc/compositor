@@ -40,6 +40,12 @@ pub(crate) struct ServedSite {
 /// The client script, baselined at the epoch the page was built at (not the
 /// first `/__reload` poll response) — otherwise a reload that lands between
 /// page load and the first poll gets swallowed: see module docs.
+///
+/// Before reloading on an epoch change, it calls `window.__compositorBeforeReload(newEpoch)`
+/// if the page installed one. Returning `true` suppresses the reload and adopts `newEpoch` as
+/// the new baseline — an edit-mode client's escape hatch for a save it triggered itself, so its
+/// own write doesn't blow away in-progress editor state with a full-page reload. No hook
+/// installed (every non-editing page) means unchanged behavior: always reload on change.
 fn reload_script(epoch: u64) -> String {
     format!(
         r#"<script>
@@ -47,7 +53,10 @@ fn reload_script(epoch: u64) -> String {
   var e = "{epoch}";
   setInterval(function () {{
     fetch('/__reload').then(function (r) {{ return r.text(); }}).then(function (t) {{
-      if (t !== e) {{ location.reload(); }}
+      if (t !== e) {{
+        if (window.__compositorBeforeReload && window.__compositorBeforeReload(t)) {{ e = t; return; }}
+        location.reload();
+      }}
     }}).catch(function () {{}});
   }}, 250);
 }})();
@@ -447,6 +456,31 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
             crate::assets::COMPOSITOR_JS.as_bytes().to_vec(),
         );
         return;
+    }
+
+    // Editor assets: only exist at all when this site is serving with
+    // editing enabled (loopback-only, see `ServedSite::edit_enabled`) — off
+    // loopback these urls fall through to the branches below and 404, same
+    // as any other unmapped path.
+    if state.read().expect("state lock").edit_enabled {
+        if url == crate::assets::EDITOR_CSS_URL {
+            respond(
+                req,
+                200,
+                content_type(&url),
+                crate::assets::EDITOR_CSS.as_bytes().to_vec(),
+            );
+            return;
+        }
+        if url == crate::assets::EDITOR_JS_URL {
+            respond(
+                req,
+                200,
+                content_type(&url),
+                crate::assets::EDITOR_JS.as_bytes().to_vec(),
+            );
+            return;
+        }
     }
 
     // On-demand asset straight from docs_dir (never .md, never traversing out,
@@ -969,6 +1003,29 @@ mod tests {
         std::thread::spawn(move || serve_loop(&s, state, docs));
         let js = get(addr, "/assets/compositor.js");
         assert!(js.contains("addEventListener"));
+    }
+
+    #[test]
+    fn editor_assets_served_only_when_edit_enabled() {
+        let docs = std::path::PathBuf::from(".");
+        // edit_enabled = true -> served
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&docs, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable: HashMap::new(),
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let s = std::sync::Arc::clone(&server);
+        let d = docs.clone();
+        std::thread::spawn(move || serve_loop(&s, state, d));
+        assert!(get(addr, "/assets/editor.js").contains("200 OK"));
+
+        // reload script exposes the suppress hook.
+        assert!(reload_script(3).contains("__compositorBeforeReload"));
     }
 
     #[test]
