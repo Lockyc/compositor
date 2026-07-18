@@ -361,7 +361,7 @@ fn surface_repo_instruction_file(
 /// then `AGENTS.md`, each gated by its `surface_*_md` toggle (both default on). When
 /// both are enabled and `AGENTS.md`'s raw content is identical to a surfaced
 /// `CLAUDE.md`'s (symlink or byte-identical), the AGENTS entry is dropped so the nav
-/// carries no duplicate. Replaces the former single-file `surface_repo_claude`.
+/// carries no duplicate.
 pub fn surface_repo_agent_files(
     site: &mut SiteModel,
     cfg: &SiteConfig,
