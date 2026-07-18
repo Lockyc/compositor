@@ -25,6 +25,15 @@ pub(crate) struct ServedSite {
     /// outside the docs tree. `handle` cannot find these under `docs`, and
     /// rebuilding it alongside `pages` is what keeps the two from drifting.
     pub(crate) root_assets: HashMap<String, PathBuf>,
+    /// site url -> the on-disk Markdown file that url writes to. Empty
+    /// whenever `edit_enabled` is false (never populated by `build_pages`
+    /// in that mode) — a later write endpoint must never trust a url that
+    /// isn't in this map.
+    pub(crate) editable: HashMap<String, PathBuf>,
+    /// Whether this site is serving with inline editing on — decided once in
+    /// `setup` from the bind host (see `host_is_loopback`) and carried
+    /// unchanged through every rebuild.
+    pub(crate) edit_enabled: bool,
 }
 
 /// The client script, baselined at the epoch the page was built at (not the
@@ -53,16 +62,122 @@ fn inject_reload(html: &str, epoch: u64) -> String {
     }
 }
 
-/// Render every page and inject the reload script — the map the server sends.
-/// `epoch` is baked into each page as the client's baseline, so it must equal
-/// the epoch `/__reload` will report for this build (see `rebuild_into`).
+/// One page's edit-mode payload: the client's `#__editsrc` script tag decodes
+/// this to map a rendered block back to a source line range for autosave (see
+/// `EditSource`). Field names are the client's JS-camelCase contract, not
+/// Rust's — `serde(rename)` is the single source for that mismatch.
+#[derive(serde::Serialize)]
+struct EditPayload<'a> {
+    url: &'a str,
+    source: &'a str,
+    #[serde(rename = "fmLines")]
+    fm_lines: usize,
+    #[serde(rename = "lineMap")]
+    line_map: &'a [Option<usize>],
+}
+
+/// Inject the edit-mode scaffolding into one already-rendered page: the editor
+/// stylesheet, the toggle button, and the page's payload + client script.
+/// Mirrors `inject_reload`'s splice-before-marker approach (`rfind`, degrade
+/// to appending if the marker is missing — a rendered page always has all
+/// three, but this must never panic on a hand-crafted or future template).
+/// Call this *after* `inject_reload` so the reload script and the editor
+/// script both land before `</body>`, reload first.
+fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
+    let css = format!(r#"<link rel="stylesheet" href="{asset_prefix}assets/editor.css">"#);
+    let out = match html.rfind("</head>") {
+        Some(i) => format!("{}{}{}", &html[..i], css, &html[i..]),
+        None => format!("{html}{css}"),
+    };
+
+    let toggle = r#"<button type="button" class="edit-toggle">Edit</button>"#;
+    let out = match out.rfind("</header>") {
+        Some(i) => format!("{}{}{}", &out[..i], toggle, &out[i..]),
+        None => format!("{out}{toggle}"),
+    };
+
+    // The payload embeds the page's verbatim Markdown source inside a
+    // `<script>` tag: a source file containing the literal text "</script"
+    // (in a fenced code block, say) would otherwise close the tag early and
+    // corrupt the page. The standard mitigation: escape every "</" the JSON
+    // serializer could have emitted inside a string so no substring can ever
+    // match a tag-closing sequence.
+    let safe_json = payload_json.replace("</", "<\\/");
+    let scripts = format!(
+        r#"<script type="application/json" id="__editsrc">{safe_json}</script><script src="{asset_prefix}assets/editor.js" defer></script>"#
+    );
+    match out.rfind("</body>") {
+        Some(i) => format!("{}{}{}", &out[..i], scripts, &out[i..]),
+        None => format!("{out}{scripts}"),
+    }
+}
+
+/// A docs-tree page at the root of the tree named `index`/`home`/`readme`
+/// (case-insensitive) — the same tier-1/2 predicate `resolve_home` uses
+/// internally to decide whether it promotes a docs-tree page rather than
+/// falling through to the repo-root README. Duplicated narrowly here (rather
+/// than exposed from `render_page`) so `build_pages` can tell whether a
+/// synthetic home entry aliases an existing, already-mapped docs page — in
+/// which case its bogus placeholder `rel_path` ("index.md") must not be
+/// resolved as if it were real.
+fn has_docs_root_candidate(site: &SiteModel) -> bool {
+    site.pages.iter().any(|p| {
+        p.rel_path.parent().is_none_or(|d| d.as_os_str().is_empty())
+            && p.rel_path
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .is_some_and(|s| {
+                    matches!(s.to_ascii_lowercase().as_str(), "index" | "home" | "readme")
+                })
+    })
+}
+
+/// The repo-root `README.md` (any case), if any — the one home-resolution
+/// tier the brief asks `build_pages` to map without re-deriving
+/// `resolve_home`'s full private tier order. Only meaningful when
+/// `!has_docs_root_candidate(site)`; see that function.
+fn repo_root_readme(project_dir: &Path) -> Option<PathBuf> {
+    std::fs::read_dir(project_dir)
+        .ok()?
+        .flatten()
+        .map(|e| e.path())
+        .find(|p| {
+            p.is_file()
+                && p.extension().and_then(|e| e.to_str()) == Some("md")
+                && p.file_stem()
+                    .and_then(|s| s.to_str())
+                    .is_some_and(|s| s.eq_ignore_ascii_case("readme"))
+        })
+}
+
+/// Render every page, injecting the reload script and — when `edit_enabled`
+/// — the editor scaffolding. `epoch` is baked into each page as the client's
+/// baseline, so it must equal the epoch `/__reload` will report for this
+/// build (see `rebuild_into`).
+///
+/// Also returns the `editable` map (site url -> on-disk source file), built
+/// alongside the render so it can never drift from what was actually served.
+/// Population is deliberately conservative: a normal docs page's source
+/// always exists on disk by construction, but the promoted-home and
+/// surfaced-CLAUDE pages carry a `rel_path` that may not point at a real
+/// file (the promoted home's is a bare placeholder), so those only earn an
+/// entry when a real backing file is actually resolved — see
+/// `has_docs_root_candidate` / `repo_root_readme`. A page with no resolvable
+/// source (the generated index; a docs-tree-promoted home aliased under a
+/// second url) is simply absent from the map, not an error.
+#[allow(clippy::type_complexity)]
 pub(crate) fn build_pages(
     cfg: &SiteConfig,
     site: &mut SiteModel,
     project_dir: &Path,
     epoch: u64,
     excluder: &Excluder,
-) -> Result<(HashMap<String, String>, HashMap<String, PathBuf>)> {
+    edit_enabled: bool,
+) -> Result<(
+    HashMap<String, String>,
+    HashMap<String, PathBuf>,
+    HashMap<String, PathBuf>,
+)> {
     let docs = cfg.docs_path(project_dir);
     // Always lenient: `serve` must never halt an unattended rebuild, so a dead
     // image degrades to a 404 exactly as a dead link does.
@@ -73,19 +188,70 @@ pub(crate) fn build_pages(
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(site, cfg, project_dir, &images)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
+
+    let mut editable = HashMap::new();
+    if edit_enabled {
+        // Every normal `site.pages` entry (docs pages and the surfaced
+        // CLAUDE.html, if any) has a `rel_path` that is real relative to
+        // *either* the docs dir or the project root — try both, first hit
+        // wins, so a repo-root-surfaced page resolves without needing to
+        // know which case produced it.
+        for p in &site.pages {
+            let candidate = docs.join(&p.rel_path);
+            let src = if candidate.is_file() {
+                Some(candidate)
+            } else {
+                let root_candidate = project_dir.join(&p.rel_path);
+                root_candidate.is_file().then_some(root_candidate)
+            };
+            if let Some(src) = src {
+                editable.insert(p.url.clone(), src);
+            }
+        }
+        // The synthetic home page's own `rel_path` is a placeholder, so it is
+        // resolved separately: only the repo-root-README tier is mapped here
+        // (see `repo_root_readme`'s doc comment for why the docs-promoted
+        // tier is left unmapped under `index.html` — its original url
+        // already covers the same file via the loop above).
+        if let Some(h) = &home {
+            if !has_docs_root_candidate(site) {
+                if let Some(readme) = repo_root_readme(project_dir) {
+                    editable.insert(h.url.clone(), readme);
+                }
+            }
+        }
+    }
+
     let pages = site
         .pages
         .iter()
         .chain(home.as_ref())
         .map(|p| {
             let (prev, next) = crate::render_page::neighbours(&order, &p.url);
-            (
-                p.url.clone(),
-                inject_reload(&render_page(cfg, &site.nav, p, prev, next), epoch),
-            )
+            let rendered = inject_reload(&render_page(cfg, &site.nav, p, prev, next), epoch);
+            let rendered = if edit_enabled {
+                if let Some(es) = &p.edit_source {
+                    let depth = p.url.matches('/').count();
+                    let asset_prefix = "../".repeat(depth);
+                    let payload = EditPayload {
+                        url: &p.url,
+                        source: &es.source,
+                        fm_lines: es.fm_lines,
+                        line_map: &es.line_map,
+                    };
+                    let payload_json = serde_json::to_string(&payload)
+                        .expect("EditPayload has no non-serializable field");
+                    inject_editor(&rendered, &payload_json, &asset_prefix)
+                } else {
+                    rendered
+                }
+            } else {
+                rendered
+            };
+            (p.url.clone(), rendered)
         })
         .collect();
-    Ok((pages, images.copies().into_iter().collect()))
+    Ok((pages, images.copies().into_iter().collect(), editable))
 }
 
 /// Map a request path to a site url: "" / "/" -> index.html, trailing "/" ->
@@ -242,17 +408,27 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
     for w in excluder.warnings() {
         eprintln!("warning: {w}");
     }
-    // TODO(task 4): pass the real edit flag once serve wires inline editing.
-    match build_site(docs, LinkPolicy::Lenient, &excluder, false) {
+    // The bind host never changes mid-session, so `edit_enabled` (decided
+    // once in `setup`) is read back rather than recomputed here.
+    let edit_enabled = state.read().expect("state lock").edit_enabled;
+    match build_site(docs, LinkPolicy::Lenient, &excluder, edit_enabled) {
         Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
-            match build_pages(cfg, &mut site, project_dir, next_epoch, &excluder) {
-                Ok((pages, root_assets)) => {
+            match build_pages(
+                cfg,
+                &mut site,
+                project_dir,
+                next_epoch,
+                &excluder,
+                edit_enabled,
+            ) {
+                Ok((pages, root_assets, editable)) => {
                     let mut s = state.write().expect("state lock");
                     s.pages = pages;
                     s.epoch = next_epoch;
                     s.excluder = excluder;
                     s.root_assets = root_assets;
+                    s.editable = editable;
                 }
                 Err(e) => eprintln!("rebuild failed, keeping last good site: {e:#}"),
             }
@@ -335,7 +511,6 @@ fn open_browser(url: &str) {
 /// IP and ask the stdlib; treat the literal "localhost" as loopback; everything
 /// else (including names we can't resolve here and unspecified `0.0.0.0`/`::`)
 /// is treated as non-loopback so editing is never enabled by accident.
-#[allow(dead_code)]
 fn host_is_loopback(host: &str) -> bool {
     if host.eq_ignore_ascii_case("localhost") {
         return true;
@@ -378,13 +553,20 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
         eprintln!("warning: {w}");
     }
 
-    let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, false)?;
-    let (pages, root_assets) = build_pages(&cfg, &mut site, project_dir, 0, &excluder)?;
+    // The readonly opt-out (Task 9, for embedded hosts) is not wired yet —
+    // `run_serve` and `serve_handle` both get the loopback-derived flag as-is.
+    let edit_enabled = host_is_loopback(host);
+
+    let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, edit_enabled)?;
+    let (pages, root_assets, editable) =
+        build_pages(&cfg, &mut site, project_dir, 0, &excluder, edit_enabled)?;
     let state = Arc::new(RwLock::new(ServedSite {
         pages,
         epoch: 0,
         excluder,
         root_assets,
+        editable,
+        edit_enabled,
     }));
 
     let watcher = spawn_watcher(
@@ -602,6 +784,8 @@ mod tests {
             epoch: 0,
             excluder: Arc::new(excluder),
             root_assets: HashMap::new(),
+            editable: HashMap::new(),
+            edit_enabled: false,
         }))
     }
 
@@ -778,6 +962,8 @@ mod tests {
             epoch: 0,
             excluder: Arc::new(Excluder::new(&tmp, &tmp, &[])),
             root_assets,
+            editable: HashMap::new(),
+            edit_enabled: false,
         }));
 
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -813,12 +999,15 @@ mod tests {
         };
         let excluder = Arc::new(Excluder::new(&tmp, &docs, &[]));
         let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, false).unwrap();
-        let (pages, root_assets) = build_pages(&cfg, &mut site, &tmp, 0, &excluder).unwrap();
+        let (pages, root_assets, editable) =
+            build_pages(&cfg, &mut site, &tmp, 0, &excluder, false).unwrap();
         let state = RwLock::new(ServedSite {
             pages,
             epoch: 0,
             excluder,
             root_assets,
+            editable,
+            edit_enabled: false,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
@@ -968,6 +1157,60 @@ mod tests {
         assert!(!host_is_loopback("::"));
         assert!(!host_is_loopback("192.168.1.10"));
         assert!(!host_is_loopback("example.com")); // unknown name -> not editable
+    }
+
+    #[test]
+    fn edit_pages_carry_toggle_and_payload_and_map_source() {
+        let tmp = std::env::temp_dir().join(format!("comp-editpages-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("index.md"), "# One\n\npara\n").unwrap();
+        let cfg = SiteConfig {
+            site_name: "T".into(),
+            docs_dir: Some("docs".into()),
+            ..Default::default()
+        };
+        let ex = Arc::new(Excluder::new(&tmp, &docs, &[]));
+
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &ex, true).unwrap();
+        let (pages, _root, editable) = build_pages(&cfg, &mut site, &tmp, 0, &ex, true).unwrap();
+
+        let idx = &pages["index.html"];
+        assert!(
+            idx.contains(r#"class="edit-toggle"#),
+            "toggle injected: {idx}"
+        );
+        assert!(idx.contains(r#"id="__editsrc""#), "payload injected");
+        assert!(idx.contains("editor.js"), "editor script injected");
+        assert_eq!(
+            editable["index.html"],
+            docs.join("index.md"),
+            "url maps to source file"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn build_pages_without_edit_are_clean() {
+        let tmp = std::env::temp_dir().join(format!("comp-noedit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("index.md"), "# One\n").unwrap();
+        let cfg = SiteConfig {
+            site_name: "T".into(),
+            docs_dir: Some("docs".into()),
+            ..Default::default()
+        };
+        let ex = Arc::new(Excluder::new(&tmp, &docs, &[]));
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &ex, false).unwrap();
+        let (pages, _root, editable) = build_pages(&cfg, &mut site, &tmp, 0, &ex, false).unwrap();
+        assert!(!pages["index.html"].contains("edit-toggle"));
+        assert!(!pages["index.html"].contains("editor.js"));
+        assert!(editable.is_empty());
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]
