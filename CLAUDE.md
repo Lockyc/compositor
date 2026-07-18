@@ -1,3 +1,7 @@
+---
+type: architecture
+---
+
 # compositor
 
 ## Purpose

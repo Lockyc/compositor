@@ -1,3 +1,10 @@
+---
+type: reference
+links:
+  - rel: part-of
+    to: CLAUDE.md
+---
+
 # Follow-ups / known limitations
 
 Deferred work and accepted limitations, with enough context to pick up later.
