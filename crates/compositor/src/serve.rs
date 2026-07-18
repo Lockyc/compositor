@@ -675,7 +675,20 @@ struct Serving {
 
 /// Load the config, build the site, start the watcher, and bind the port — everything up to
 /// (but not including) the blocking request loop.
-fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
+///
+/// `edit_override` is the embedding read-only opt-out: `None` leaves edit
+/// capability loopback-derived (the CLI and the default `serve_handle`),
+/// `Some(false)` forces it off regardless of the bind host (an embedded host
+/// that wants a read-only site), and `Some(true)` would force it on. A forced
+/// value wins over `host_is_loopback` so an embedded consumer can decline the
+/// write endpoint even on loopback — no `/__edit`, no editor assets, no
+/// injection.
+fn setup(
+    project_dir: &Path,
+    host: &str,
+    port: Option<u16>,
+    edit_override: Option<bool>,
+) -> Result<Serving> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
@@ -684,9 +697,9 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
         eprintln!("warning: {w}");
     }
 
-    // The readonly opt-out (Task 9, for embedded hosts) is not wired yet —
-    // `run_serve` and `serve_handle` both get the loopback-derived flag as-is.
-    let edit_enabled = host_is_loopback(host);
+    // Loopback-derived by default; an embedded host may force it off (or on)
+    // via `edit_override`, which then wins over the bind host.
+    let edit_enabled = edit_override.unwrap_or_else(|| host_is_loopback(host));
 
     let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, edit_enabled)?;
     let (pages, root_assets, editable) =
@@ -723,7 +736,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
         docs,
         // Held until this function returns; dropping it would disable live-reload.
         watcher: _watcher,
-    } = setup(project_dir, host, port)?;
+    } = setup(project_dir, host, port, None)?;
 
     let listen = server.server_addr();
     println!("compositor serving {} on http://{listen}/", docs.display());
@@ -806,13 +819,31 @@ impl Drop for ServeHandle {
 ///
 /// The non-blocking counterpart to [`run_serve`], for hosts embedding many sites in one
 /// process. Both build from the same `setup`, so the CLI and the embedded path cannot drift.
+///
+/// Editing is on (loopback-derived) — the writable default. A host that wants a
+/// read-only site calls [`serve_handle_with`] with `editable = false`.
 pub fn serve_handle(project_dir: &Path) -> Result<ServeHandle> {
+    serve_handle_with(project_dir, true)
+}
+
+/// Serve `project_dir` on an OS-assigned loopback port, choosing whether inline
+/// editing is available.
+///
+/// `editable = true` is [`serve_handle`]'s writable default (edit stays
+/// loopback-derived, which on the loopback bind means on). `editable = false`
+/// forces edit capability off regardless of the loopback bind: no `/__edit`
+/// endpoint, no editor assets, and no editor scaffolding injected into pages —
+/// a read-only embedded site. The opt-out is threaded through `setup` as an
+/// `edit_override`, the single place the flag is decided.
+pub fn serve_handle_with(project_dir: &Path, editable: bool) -> Result<ServeHandle> {
+    // `true` leaves edit loopback-derived (on, here); `false` forces it off.
+    let edit_override = if editable { None } else { Some(false) };
     let Serving {
         server,
         state,
         docs,
         watcher,
-    } = setup(project_dir, "127.0.0.1", None)?;
+    } = setup(project_dir, "127.0.0.1", None, edit_override)?;
 
     let port = server
         .server_addr()
@@ -1631,6 +1662,39 @@ mod tests {
         assert!(img.contains("200 OK"), "img resp: {img}");
         assert!(img.contains("PNGDATA"), "img resp: {img}");
 
+        h.shutdown();
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn serve_handle_readonly_refuses_edit() {
+        let tmp = std::env::temp_dir().join(format!("comp-ro-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Hi\n").unwrap();
+
+        let h = serve_handle_with(&tmp, false).expect("binds");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], h.port));
+        let resp = post(addr, "/__edit", r#"{"url":"index.html","source":"x"}"#);
+        assert!(
+            resp.contains("404"),
+            "read-only handle must not expose /__edit: {resp}"
+        );
+        // and no editor assets
+        assert!(get(addr, "/assets/editor.js").contains("404"));
+        h.shutdown();
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn serve_handle_default_is_editable_on_loopback() {
+        let tmp = std::env::temp_dir().join(format!("comp-rw-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Hi\n\npara\n").unwrap();
+        let h = serve_handle(&tmp).expect("binds");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], h.port));
+        assert!(get(addr, "/assets/editor.js").contains("200 OK"));
         h.shutdown();
         std::fs::remove_dir_all(&tmp).ok();
     }
