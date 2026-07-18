@@ -330,6 +330,20 @@ fn open_browser(url: &str) {
     let _ = std::process::Command::new(cmd).arg(url).spawn();
 }
 
+/// Whether a bind host is loopback — the gate for edit capability. Parse as an
+/// IP and ask the stdlib; treat the literal "localhost" as loopback; everything
+/// else (including names we can't resolve here and unspecified `0.0.0.0`/`::`)
+/// is treated as non-loopback so editing is never enabled by accident.
+#[allow(dead_code)]
+fn host_is_loopback(host: &str) -> bool {
+    if host.eq_ignore_ascii_case("localhost") {
+        return true;
+    }
+    host.parse::<std::net::IpAddr>()
+        .map(|ip| ip.is_loopback())
+        .unwrap_or(false)
+}
+
 /// Bind the HTTP server. `None` port binds `:0` so the OS assigns a free
 /// ephemeral port (the default — never fails on "address in use"); `Some(p)`
 /// binds exactly `p` and errors loudly if it is taken (honoring `--port`).
@@ -941,6 +955,18 @@ mod tests {
         assert!(rebound.is_some(), "port {port} still bound after shutdown");
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn loopback_hosts_enable_editing_others_do_not() {
+        assert!(host_is_loopback("127.0.0.1"));
+        assert!(host_is_loopback("localhost"));
+        assert!(host_is_loopback("::1"));
+        assert!(host_is_loopback("127.5.5.5")); // whole 127/8 is loopback
+        assert!(!host_is_loopback("0.0.0.0"));
+        assert!(!host_is_loopback("::"));
+        assert!(!host_is_loopback("192.168.1.10"));
+        assert!(!host_is_loopback("example.com")); // unknown name -> not editable
     }
 
     #[test]
