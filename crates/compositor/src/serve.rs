@@ -68,8 +68,8 @@ pub(crate) fn build_pages(
     // image degrades to a 404 exactly as a dead link does.
     let images =
         crate::root_assets::RootAssets::new(project_dir, &docs, excluder, LinkPolicy::Lenient);
-    // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
-    crate::render_page::surface_repo_claude(site, cfg, project_dir, &images)?;
+    // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
+    crate::render_page::surface_repo_agent_files(site, cfg, project_dir, &images)?;
     // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(site, cfg, project_dir, &images)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
