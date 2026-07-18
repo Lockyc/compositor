@@ -29,10 +29,17 @@ scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
 MkDocs-style `!!!` admonitions and `???` collapsibles; `[[wikilinks]]` resolved
 by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.html`
 link rewriting; and non-Markdown assets copied through verbatim. Images resolve
-against the page that references them — including a repo-root `README.md` or
-`CLAUDE.md` surfaced into the site, whose images resolve against the repo root
-and are copied in on reference. Raw HTML in your Markdown renders as-is,
-matching MkDocs — compositor assumes author-trusted content.
+against the page that references them — including a repo-root `README.md`,
+`CLAUDE.md`, or `AGENTS.md` surfaced into the site, whose images resolve against
+the repo root and are copied in on reference. Raw HTML in your Markdown renders
+as-is, matching MkDocs — compositor assumes author-trusted content.
+
+A repo-root `CLAUDE.md` and/or `AGENTS.md` (when the docs dir is a subdir) gets
+its own top-level nav entry alongside Home — both on by default. Set
+`surface_claude_md = false` and/or `surface_agents_md = false` in
+`compositor.toml` to hide either one. When both files are present and
+`AGENTS.md`'s content is identical to `CLAUDE.md`'s (a symlink or a copy), only
+the CLAUDE entry shows, so the nav never carries a duplicate.
 
 **There is no site search**, deliberately — see [`CLAUDE.md`](CLAUDE.md).
 
@@ -62,7 +69,8 @@ everywhere else, build from source with the two lines above.
 
 A `compositor.toml` is optional. With one, it sets `site_name` (optionally
 `site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`],
-`exclude` [default: none]). Without one, defaults are synthesized: `site_name`
+`exclude` [default: none], `surface_claude_md` [default `true`],
+`surface_agents_md` [default `true`]). Without one, defaults are synthesized: `site_name`
 from the folder name, and the docs are taken from `docs/` if that subdir exists,
 else the directory itself — so a bare folder of Markdown builds and serves with
 no config. (A `compositor.toml` that exists but is malformed is a hard error, not

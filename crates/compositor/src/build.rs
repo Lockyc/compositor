@@ -23,8 +23,8 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     // The two pages compositor renders from outside the docs tree resolve their
     // images against the repo root; `images` records what must be copied.
     let images = crate::root_assets::RootAssets::new(project_dir, &docs, &excluder, policy);
-    // A repo-root CLAUDE.md (outside the docs tree) is surfaced as a nav page.
-    crate::render_page::surface_repo_claude(&mut site, &cfg, project_dir, &images)?;
+    // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
+    crate::render_page::surface_repo_agent_files(&mut site, &cfg, project_dir, &images)?;
     // compositor owns the home page: a docs tree with no index.md still gets a
     // working `/` (see `resolve_home`).
     let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images)?;

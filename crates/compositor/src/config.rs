@@ -18,6 +18,17 @@ pub struct SiteConfig {
     /// (the `exclude_docs` analog). E.g. `["superpowers/"]`, `["inbox/"]`.
     #[serde(default)]
     pub exclude: Vec<String>,
+    /// Surface a repo-root `CLAUDE.md` as a top-level nav entry. Default `true`
+    /// (a missing key and a no-config directory both resolve on). Set `false` to
+    /// hide it. `Option` so "unset" means on in both the deserialize and the
+    /// synthesized (`..Default::default()`) paths — a plain `bool` would take the
+    /// derived-`Default` `false` and silently disable surfacing for bare dirs.
+    #[serde(default)]
+    pub surface_claude_md: Option<bool>,
+    /// Surface a repo-root `AGENTS.md` as a top-level nav entry. Same default and
+    /// rationale as `surface_claude_md`; independent of it.
+    #[serde(default)]
+    pub surface_agents_md: Option<bool>,
 }
 
 impl SiteConfig {
@@ -68,6 +79,14 @@ impl SiteConfig {
 
     pub fn out_dir(&self) -> &str {
         self.out_dir.as_deref().unwrap_or("site")
+    }
+
+    pub fn surface_claude_md(&self) -> bool {
+        self.surface_claude_md.unwrap_or(true)
+    }
+
+    pub fn surface_agents_md(&self) -> bool {
+        self.surface_agents_md.unwrap_or(true)
     }
 
     /// The docs directory as a path under `project_dir`. A `docs_dir` of "."
@@ -158,6 +177,30 @@ mod tests {
             SiteConfig::load(&tmp).unwrap().exclude,
             vec!["superpowers/".to_string(), "inbox/".to_string()]
         );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn surface_toggles_default_on_and_parse_off() {
+        let tmp = scratch("surface");
+        // No compositor.toml at all -> synthesized -> both on.
+        let cfg = SiteConfig::load(&tmp).unwrap();
+        assert!(cfg.surface_claude_md());
+        assert!(cfg.surface_agents_md());
+        // Present file, keys missing -> both on (accessor default).
+        std::fs::write(tmp.join("compositor.toml"), "site_name = \"X\"\n").unwrap();
+        let cfg = SiteConfig::load(&tmp).unwrap();
+        assert!(cfg.surface_claude_md());
+        assert!(cfg.surface_agents_md());
+        // Explicit false -> off, independently.
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\nsurface_claude_md = false\nsurface_agents_md = false\n",
+        )
+        .unwrap();
+        let cfg = SiteConfig::load(&tmp).unwrap();
+        assert!(!cfg.surface_claude_md());
+        assert!(!cfg.surface_agents_md());
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
