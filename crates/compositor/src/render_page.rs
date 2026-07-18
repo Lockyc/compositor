@@ -251,7 +251,7 @@ fn repo_readme_home(
 
 /// A top-level `*.md` file in `dir` whose stem equals `stem` (case-insensitive) —
 /// the one discovery function for the repo-root files compositor surfaces from
-/// outside the docs tree (`README.md` → home, `CLAUDE.md` → nav entry).
+/// outside the docs tree (`README.md` → home, `CLAUDE.md`/`AGENTS.md` → nav entry).
 fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
     std::fs::read_dir(dir)
         .ok()?
@@ -288,6 +288,7 @@ fn surface_repo_instruction_file(
     project_dir: &Path,
     images: &dyn ImageResolver,
     label: &str,
+    after: Option<&str>,
     skip_if_content_eq: Option<&str>,
 ) -> Result<Option<String>> {
     let stem = label.to_ascii_lowercase();
@@ -326,23 +327,28 @@ fn surface_repo_instruction_file(
         html: rendered.html,
         toc: rendered.toc,
     });
-    // Sit adjacent to Home: after a leading `index.html` page if the nav has one,
-    // else first (the synthetic Home is rendered ahead of the nav list separately).
-    // Append after any instruction entries already placed there so CLAUDE stays
-    // ahead of AGENTS when both surface.
+    // Insert adjacent to Home: right after a leading `index.html` page if the nav
+    // has one, else first. When `after` names the url now sitting at that spot (the
+    // sibling this call was just placed after), step one past it so CLAUDE stays
+    // ahead of AGENTS — without mistaking an unrelated docs-tree page of the same
+    // url for a freshly-surfaced sibling.
     let base = usize::from(matches!(
         site.nav.0.first(),
         Some(NavNode::Page { url, .. }) if url.as_str() == "index.html"
     ));
-    let run = site.nav.0[base..]
-        .iter()
-        .take_while(|n| {
-            matches!(n, NavNode::Page { url, .. }
-                if url == "CLAUDE.html" || url == "AGENTS.html")
-        })
-        .count();
+    let pos = match after {
+        Some(sibling)
+            if matches!(
+                site.nav.0.get(base),
+                Some(NavNode::Page { url, .. }) if url == sibling
+            ) =>
+        {
+            base + 1
+        }
+        _ => base,
+    };
     site.nav.0.insert(
-        base + run,
+        pos,
         NavNode::Page {
             title: label.to_string(),
             url: url.clone(),
@@ -363,17 +369,23 @@ pub fn surface_repo_agent_files(
     images: &dyn ImageResolver,
 ) -> Result<()> {
     let claude_raw = if cfg.surface_claude_md() {
-        surface_repo_instruction_file(site, cfg, project_dir, images, "CLAUDE", None)?
+        surface_repo_instruction_file(site, cfg, project_dir, images, "CLAUDE", None, None)?
     } else {
         None
     };
     if cfg.surface_agents_md() {
+        let after = if claude_raw.is_some() {
+            Some("CLAUDE.html")
+        } else {
+            None
+        };
         surface_repo_instruction_file(
             site,
             cfg,
             project_dir,
             images,
             "AGENTS",
+            after,
             claude_raw.as_deref(),
         )?;
     }
@@ -705,6 +717,41 @@ mod tests {
             }
             _ => panic!("unexpected nav shape: {} nodes", s.nav.0.len()),
         }
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn claude_sits_adjacent_to_home_past_an_unrelated_docs_tree_agents_page() {
+        // A docs-tree page already occupying AGENTS.html sits right after Home;
+        // surfacing a repo-root CLAUDE.md must still land CLAUDE immediately after
+        // Home (index), not after the unrelated docs-tree AGENTS entry.
+        let tmp = scratch("repo-claude-order-sibling");
+        std::fs::write(tmp.join("CLAUDE.md"), "claude notes").unwrap();
+        let mut s = site(vec![
+            page("index.md", "index.html", "home"),
+            page("AGENTS.md", "AGENTS.html", "docs-tree agents"),
+        ]);
+        s.nav = NavTree(vec![
+            NavNode::Page {
+                title: "Home".into(),
+                url: "index.html".into(),
+            },
+            NavNode::Page {
+                title: "AGENTS".into(),
+                url: "AGENTS.html".into(),
+            },
+        ]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        let urls: Vec<&str> = s
+            .nav
+            .0
+            .iter()
+            .filter_map(|n| match n {
+                NavNode::Page { url, .. } => Some(url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(urls, vec!["index.html", "CLAUDE.html", "AGENTS.html"]);
         std::fs::remove_dir_all(&tmp).ok();
     }
 
