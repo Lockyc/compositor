@@ -266,14 +266,15 @@ fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
         })
 }
 
-/// Surface one repo-root instruction file — `<stem>.md` (case-insensitive) — as a
-/// top-level nav page labelled `label`, at `url`, adjacent to Home. Returns the
-/// file's raw content when it added an entry (so a caller can dedup a sibling
-/// against it), or `None` when nothing was surfaced.
+/// Surface one repo-root instruction file — `<label>.md` matched case-insensitively
+/// (e.g. `label = "CLAUDE"` matches `CLAUDE.md`/`claude.md`) — as a top-level nav
+/// page labelled `label`, at `<label>.html`, adjacent to Home. Returns the file's
+/// raw content when it added an entry (so a caller can dedup a sibling against it),
+/// or `None` when nothing was surfaced.
 ///
 /// A no-op unless the docs dir is a *subdir* (when it *is* the repo root, a file at
 /// the root is already an ordinary docs page), such a file exists, and no page
-/// already occupies `url` (a docs-tree file of the same name is already surfaced —
+/// already occupies the url (a docs-tree file of the same name is already surfaced —
 /// don't double-add). `skip_if_content_eq` is a dedup guard: when the raw content
 /// equals it, treat as a no-op (the sibling already carries identical content).
 ///
@@ -286,11 +287,11 @@ fn surface_repo_instruction_file(
     cfg: &SiteConfig,
     project_dir: &Path,
     images: &dyn ImageResolver,
-    stem: &str,
     label: &str,
-    url: &str,
     skip_if_content_eq: Option<&str>,
 ) -> Result<Option<String>> {
+    let stem = label.to_ascii_lowercase();
+    let url = format!("{label}.html");
     // Docs dir *is* the repo root → a root file is already a docs page.
     if cfg.docs_path(project_dir) == project_dir {
         return Ok(None);
@@ -299,7 +300,7 @@ fn surface_repo_instruction_file(
     if site.pages.iter().any(|p| p.url == url) {
         return Ok(None);
     }
-    let Some(path) = find_repo_root_md(project_dir, stem) else {
+    let Some(path) = find_repo_root_md(project_dir, &stem) else {
         return Ok(None);
     };
     let Ok(raw) = std::fs::read_to_string(&path) else {
@@ -319,7 +320,7 @@ fn surface_repo_instruction_file(
         images,
     )?;
     site.pages.push(Page {
-        url: url.to_string(),
+        url: url.clone(),
         rel_path: PathBuf::from(format!("{label}.md")),
         title: label.to_string(),
         html: rendered.html,
@@ -344,7 +345,7 @@ fn surface_repo_instruction_file(
         base + run,
         NavNode::Page {
             title: label.to_string(),
-            url: url.to_string(),
+            url: url.clone(),
         },
     );
     Ok(Some(raw))
@@ -362,9 +363,7 @@ pub fn surface_repo_agent_files(
     images: &dyn ImageResolver,
 ) -> Result<()> {
     let claude_raw = if cfg.surface_claude_md() {
-        surface_repo_instruction_file(
-            site, cfg, project_dir, images, "claude", "CLAUDE", "CLAUDE.html", None,
-        )?
+        surface_repo_instruction_file(site, cfg, project_dir, images, "CLAUDE", None)?
     } else {
         None
     };
@@ -374,9 +373,7 @@ pub fn surface_repo_agent_files(
             cfg,
             project_dir,
             images,
-            "agents",
             "AGENTS",
-            "AGENTS.html",
             claude_raw.as_deref(),
         )?;
     }
