@@ -5,9 +5,11 @@
    `--pico-primary`/`--pico-muted-*` exactly as the shell does. */
 
 /* --- Edit toggle: a third topbar control, same accent-outline treatment as
-   `.theme-toggle`/`.nav-toggle` (shared selector, not a duplicated ruleset —
-   drifting this one out of sync with its siblings is the failure mode this
-   avoids). `[aria-pressed="true"]` (set by editor.js once editing is on)
+   `.theme-toggle`/`.nav-toggle`. This ruleset is *necessarily duplicated*
+   across files — editor.css is a separate, loopback-only stylesheet, so it
+   can't extend compositor.css's comma-separated selector list; keep the base
+   in sync with its siblings by hand (no lint catches drift here).
+   `[aria-pressed="true"]` (set by editor.js once editing is on)
    flips it to a filled state so "editing is ON" reads at a glance, matching
    the same filled look the siblings only show on hover. */
 .topbar .edit-toggle {

@@ -94,7 +94,10 @@ struct EditPayload<'a> {
 /// Call this *after* `inject_reload` so the reload script and the editor
 /// script both land before `</body>`, reload first.
 fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
-    let css = format!(r#"<link rel="stylesheet" href="{asset_prefix}assets/editor.css">"#);
+    let css = format!(
+        r#"<link rel="stylesheet" href="{asset_prefix}{}">"#,
+        crate::assets::EDITOR_CSS_URL
+    );
     let out = match html.rfind("</head>") {
         Some(i) => format!("{}{}{}", &html[..i], css, &html[i..]),
         None => format!("{html}{css}"),
@@ -114,7 +117,8 @@ fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
     // match a tag-closing sequence.
     let safe_json = payload_json.replace("</", "<\\/");
     let scripts = format!(
-        r#"<script type="application/json" id="__editsrc">{safe_json}</script><script src="{asset_prefix}assets/editor.js" defer></script>"#
+        r#"<script type="application/json" id="__editsrc">{safe_json}</script><script src="{asset_prefix}{}" defer></script>"#,
+        crate::assets::EDITOR_JS_URL
     );
     match out.rfind("</body>") {
         Some(i) => format!("{}{}{}", &out[..i], scripts, &out[i..]),
