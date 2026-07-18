@@ -23,6 +23,14 @@ move; the rendering is the settled part.
 live-reload dev server: it watches the tree, rebuilds in memory on change, and
 refreshes open browser tabs.
 
+**Edit in place.** On a loopback `serve`, a topbar toggle flips the site into an
+in-place editor: click a paragraph, heading, list, table, or code block and edit it
+as rendered — changes autosave to the source `.md` and live-reload swaps the result
+back in. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
+around them stay byte-for-byte. It's off by default on any non-loopback bind
+(`serve --host 0.0.0.0`) and never present in `build` output — the served site alone
+can write files, and only over the loopback.
+
 **What you get, with no config:** a Pico.css shell (top bar, light/dark toggle
 that persists, a tree-nav marking the active page, a per-page TOC with
 scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;

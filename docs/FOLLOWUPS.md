@@ -92,6 +92,49 @@ Not bugs that block use — conscious deferrals.
   helper would earn its keep — today they genuinely diverge (`rewrite_link`
   also does `.md`->`.html`), so they're deliberately not collapsed.
 
+## Serve-mode inline editing
+
+- **Repo-root README / CLAUDE / AGENTS pages are read-only.** The docs-tree pages edit
+  inline, but the promoted repo-root landing (`resolve_home`) and the surfaced
+  CLAUDE/AGENTS nav pages (`surface_repo_instruction_file`) render via `render_markdown`
+  with `edit_source: None`, so they carry no editor. Deliberately deferred (a conscious
+  scope call): these are "lenient outside-the-docs-contract" pages whose source resolves
+  against the *repo root*, not the docs dir — a distinct path with its own edge cases, on
+  files more precious to risk on a WYSIWYG round-trip. To enable: make those two render
+  paths use `render_markdown_editable` and populate `edit_source` with the repo-root file
+  (the `editable` url→source map already resolves their targets).
+
+- **Admonitions and wikilink-dense blocks are not inline-editable** (`data-noedit`).
+  `preprocess_admonitions` rewrites `!!!` blocks *before* comrak parses, so comrak's
+  source positions inside an admonition point at the injected `<div>`, not the original
+  `!!!` lines — faithful source-mapping there needs the preprocessor taught to carry the
+  *original* ranges (the passthrough line-map in `preprocess_admonitions_mapped` handles
+  only the surrounding non-admonition lines, which is exactly what marks an
+  admonition-touched block read-only). Deferred as its own piece of work.
+
+- **Structural editing is bounded to edit / add-adjacent / delete within a dirty region.**
+  Reconstruction range-replaces a dirty *region* (consecutive edited blocks bounded by
+  untouched mapped blocks), so a paragraph split off with Enter, or a deleted block, round-
+  trips. Not covered: drag-reorder across blocks, and a nested list inside an `<li>` is
+  flattened when its parent list is edited. Confirm the live DOM shape before extending.
+
+- **Editing is confined to existing files** — no create / rename / delete from the browser.
+  `/__edit` only writes a url already in the `editable` map; adding, moving, or removing a
+  page is out of scope for v1.
+
+- **No JS test harness.** `editor.js`'s serializer and reconstruction have no unit tests
+  (the repo is otherwise pure Rust). Correctness is held by the Rust `/__edit` endpoint
+  tests, a standalone Node byte-preservation harness run during development, and an
+  end-to-end headless-browser pass (edit a block on a page carrying an admonition + code +
+  frontmatter + task list, then `diff` the file to prove only the edited lines changed).
+  Add a committed Node smoke harness if the serializer grows.
+
+- **`/__edit` does not drain an oversized body on a kept-alive connection.** The handler
+  caps the body it buffers (`MAX_EDIT_BODY`) and rejects an over-cap request `400`, but on
+  a keep-alive socket the un-consumed remainder is never drained, so a later request on the
+  same socket could desync. Blast radius is the one misbehaving connection, and the endpoint
+  is loopback/editor-only; drain-and-discard the remainder if it ever matters.
+
 ## Repo-root image resolution (`RootAssets`)
 
 - **`RootAssets`'s `Rewrite` can emit a raw `#`/`?` that came from the

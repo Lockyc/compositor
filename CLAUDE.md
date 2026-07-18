@@ -120,6 +120,7 @@ bug and "fixed" against the reasoning that deferred it.
 | Theme wrap, per-page TOC, prev/next pager | `compositor/src/render_page.rs` (`reading_order`) |
 | Repo-root asset resolution | `compositor/src/root_assets.rs` (`RootAssets`) |
 | `serve`, live-reload, the embedding API | `compositor/src/serve.rs` (`setup`, `serve_handle`) |
+| Serve-mode inline editing (loopback only) | `compositor/src/serve.rs` (`inject_editor`, `/__edit`, `edit_enabled`), `compositor/assets/editor.js` |
 
 - **Raw HTML passes through (`render.unsafe_ = true`) — load-bearing, not incidental.**
   The admonition preprocessor rewrites each block into an HTML wrapper whose body must
@@ -134,6 +135,36 @@ bug and "fixed" against the reasoning that deferred it.
   `<a data-wikilink>` that resolves on a later rebuild once the target exists.
 - **Known divergence from MkDocs: filenames with spaces produce spaces in URLs.**
   Functional; slugification is a deferred decision, not an oversight.
+- **Serve-mode inline editing is a loopback-only, serve-only capability.** On a
+  loopback `serve`, each page carries a global **edit toggle** (topbar, persisted
+  in `localStorage`) that turns the rendered docs-tree pages into in-place WYSIWYG
+  editors; edits autosave to the source `.md` and flow back through live-reload. The
+  invariants the code assumes:
+  - **Loopback is the hard gate.** On a non-loopback bind (`serve --host 0.0.0.0`)
+    the write endpoint `POST /__edit` is not registered and no toggle/payload/`editor.js`
+    is injected — the same posture as the gitignore/exclude "don't hand out hidden files
+    on `0.0.0.0`" rule. `build` output ships **none** of the edit scaffolding (no toggle,
+    no `data-sourcepos`, no `#__editsrc` payload, no `editor.js`). (`edit_enabled` in
+    `setup`, gated by `host_is_loopback`.)
+  - **Block-scoped, byte-preserving reconstruction — never a whole-page HTML→Markdown
+    pass** (which would corrupt admonitions, wikilinks, highlighted code, and
+    frontmatter). The client rebuilds the file by **range-replacement on the verbatim
+    original source** (shipped per page in the `#__editsrc` payload with a comrak
+    source-position map); only the lines of blocks you actually edit change — everything
+    else stays byte-identical. The map is trustworthy because `preprocess_admonitions_mapped`
+    emits a passthrough line-map (`render-core`): comrak's positions see the *preprocessed*
+    body, whose line count diverges from source across an admonition, so the map — not a
+    frontmatter offset — is what converts a block's position to a real file line, and any
+    admonition-touched block is marked `data-noedit`. (`assets/editor.js`.)
+  - **v1 editable scope.** Docs-tree paragraphs/headings/lists/tables/blockquotes edit
+    inline; fenced code edits as raw source; **admonitions, wikilink-dense blocks, and the
+    repo-root README/CLAUDE/AGENTS pages are read-only** (`data-noedit`) — see
+    [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) for why each is deferred.
+  - **Writes are authorized by a server-built url→source map, never a client-named path.**
+    `/__edit` accepts only a url already in `ServedSite.editable` and writes exactly the
+    file that map recorded, atomically (temp-write + rename); a url with no backing source
+    (a generated index) or off the map is refused. The embedding surface is writable by
+    default with a read-only opt-out — see below.
 
 ## Layout
 
@@ -162,6 +193,12 @@ and the rebuild watcher — and `Drop` does the same. It is the non-blocking cou
 `run_serve`, and **both build from the same `setup()`** — that shared
 path is load-bearing: two parallel serve loops would drift, and reimplementing serve in a host app is
 the shadow that this API exists to prevent.
+
+`serve_handle` is **writable by default** on its loopback bind — a host tab is edit-capable
+(the toggle + `/__edit` are live) unless it opts out. `serve_handle_with(project_dir, editable)`
+is that opt-out: `editable = false` forces `edit_enabled` off regardless of loopback, giving a
+pure reader with no write surface. `serve_handle` delegates with `editable = true`. The
+loopback-only write invariant (above) binds every consumer, embedded or CLI.
 
 **A returned handle means bound, not healthy — degradation must be reported, not just survived.**
 Graceful degradation (see Purpose) keeps a site serving when its watcher fails to start, and under
