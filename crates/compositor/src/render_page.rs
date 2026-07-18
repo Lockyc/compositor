@@ -1049,4 +1049,141 @@ mod tests {
         let (p, n) = neighbours(&order, "missing.html");
         assert!(p.is_none() && n.is_none());
     }
+
+    #[test]
+    fn repo_root_agents_md_surfaced_as_nav_page() {
+        let tmp = scratch("repo-agents");
+        std::fs::write(tmp.join("AGENTS.md"), "# proj\n\nagent notes").unwrap();
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        let p = s
+            .pages
+            .iter()
+            .find(|p| p.url == "AGENTS.html")
+            .expect("AGENTS page added");
+        assert_eq!(p.title, "AGENTS", "label is the fixed stem, not the H1");
+        assert!(s.nav.0.iter().any(|n| matches!(
+            n,
+            NavNode::Page { url, title } if url == "AGENTS.html" && title == "AGENTS"
+        )));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn repo_root_agents_found_case_insensitively() {
+        let tmp = scratch("repo-agents-case");
+        std::fs::write(tmp.join("agents.md"), "lower body").unwrap();
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        assert!(s.pages.iter().any(|p| p.url == "AGENTS.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn both_surfaced_in_claude_then_agents_order() {
+        let tmp = scratch("repo-both");
+        std::fs::write(tmp.join("CLAUDE.md"), "claude body").unwrap();
+        std::fs::write(tmp.join("AGENTS.md"), "agents body").unwrap();
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        let urls: Vec<&str> = s
+            .nav
+            .0
+            .iter()
+            .filter_map(|n| match n {
+                NavNode::Page { url, .. } => Some(url.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(urls, vec!["CLAUDE.html", "AGENTS.html"]);
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn identical_agents_deduped_to_claude_only() {
+        let tmp = scratch("repo-dup");
+        std::fs::write(tmp.join("CLAUDE.md"), "same body").unwrap();
+        std::fs::write(tmp.join("AGENTS.md"), "same body").unwrap();
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        assert!(s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        assert!(
+            !s.pages.iter().any(|p| p.url == "AGENTS.html"),
+            "identical AGENTS is deduped away"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn agents_surfaces_alone_when_claude_off_even_if_identical() {
+        let tmp = scratch("repo-claude-off");
+        std::fs::write(tmp.join("CLAUDE.md"), "same body").unwrap();
+        std::fs::write(tmp.join("AGENTS.md"), "same body").unwrap();
+        let cfg = SiteConfig {
+            surface_claude_md: Some(false),
+            ..cfg_named("S")
+        };
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        assert!(
+            s.pages.iter().any(|p| p.url == "AGENTS.html"),
+            "dedup must not hide AGENTS when CLAUDE is toggled off"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn agents_toggle_off_hides_entry() {
+        let tmp = scratch("repo-agents-off");
+        std::fs::write(tmp.join("AGENTS.md"), "notes").unwrap();
+        let cfg = SiteConfig {
+            surface_agents_md: Some(false),
+            ..cfg_named("S")
+        };
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        assert!(!s.pages.iter().any(|p| p.url == "AGENTS.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn claude_toggle_off_hides_entry() {
+        let tmp = scratch("repo-claude-off-only");
+        std::fs::write(tmp.join("CLAUDE.md"), "notes").unwrap();
+        let cfg = SiteConfig {
+            surface_claude_md: Some(false),
+            ..cfg_named("S")
+        };
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        assert!(!s.pages.iter().any(|p| p.url == "CLAUDE.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn docs_tree_agents_is_not_double_added() {
+        let tmp = scratch("repo-agents-dup");
+        std::fs::write(tmp.join("AGENTS.md"), "repo root agents").unwrap();
+        let mut s = site(vec![page("AGENTS.md", "AGENTS.html", "docs-tree agents")]);
+        surface_repo_agent_files(&mut s, &cfg_named("S"), &tmp, &no_images()).unwrap();
+        let agents: Vec<_> = s.pages.iter().filter(|p| p.url == "AGENTS.html").collect();
+        assert_eq!(agents.len(), 1, "no duplicate AGENTS.html");
+        assert_eq!(agents[0].html, "docs-tree agents", "docs-tree page kept");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn agents_not_surfaced_when_docs_is_the_repo_root() {
+        let tmp = scratch("repo-agents-flat");
+        std::fs::write(tmp.join("AGENTS.md"), "notes").unwrap();
+        let cfg = SiteConfig {
+            docs_dir: Some(".".to_string()),
+            ..cfg_named("S")
+        };
+        let mut s = site(vec![]);
+        surface_repo_agent_files(&mut s, &cfg, &tmp, &no_images()).unwrap();
+        assert!(!s.pages.iter().any(|p| p.url == "AGENTS.html"));
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }
