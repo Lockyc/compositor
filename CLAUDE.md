@@ -49,13 +49,20 @@ no `compositor.toml` and no special files to work:
   `README.md`** is rendered (when the docs dir is a subdir, not the repo root itself);
   else a **generated index** — the site name over the nav as a link list. Never a blank
   body. (See `render_page::resolve_home`.)
-- **Repo-root `CLAUDE.md`** → surfaced as a top-level nav entry (label `CLAUDE`,
-  never content-derived), adjacent to Home. The nav-menu sibling of the README→home
-  promotion: same repo-root discovery (`find_repo_root_md`) and lenient
-  outside-the-docs-contract rendering, but a nav page rather than the landing. Only
-  when the docs dir is a subdir (a docs-tree `CLAUDE.md` is already a normal page).
-  (See `render_page::surface_repo_claude`.)
-- **Images a repo-root README.md/CLAUDE.md references** resolve against the **repo
+- **Repo-root `CLAUDE.md` and `AGENTS.md`** → each surfaced as a top-level nav
+  entry (label `CLAUDE`/`AGENTS`, never content-derived), adjacent to Home, nav
+  order CLAUDE then AGENTS. The nav-menu sibling of the README→home promotion:
+  same repo-root discovery (`find_repo_root_md`) and lenient outside-the-docs-contract
+  rendering, but a nav page rather than the landing. Only when the docs dir is a
+  subdir (a docs-tree file of the same name is already a normal page). Both surface
+  by default; each is independently suppressible in `compositor.toml` via
+  `surface_claude_md` / `surface_agents_md` (both default `true`). When both files
+  are present and `AGENTS.md`'s raw content is identical to a surfaced `CLAUDE.md`'s
+  (a symlink or a byte-identical copy), the AGENTS entry is dropped so the nav
+  carries no duplicate — dedup only suppresses a duplicate, so toggling CLAUDE off
+  still lets an identical AGENTS.md surface on its own. (See
+  `render_page::surface_repo_agent_files`.)
+- **Images a repo-root README.md/CLAUDE.md/AGENTS.md references** resolve against the **repo
   root** (what those urls are actually relative to): one landing inside the docs
   dir is rewritten to its docs url, one outside is copied into the site mirroring
   its repo-relative path — referenced files only, never a wholesale copy of the
@@ -84,7 +91,7 @@ halt or swallow updates**. This splits the two commands' failure policy:
 
 An unresolvable **image** is treated the same as an unresolvable link: a hard
 error under `build`, an honest 404 under `--lenient` and `serve`. This holds on
-the repo-root README/CLAUDE pages too, whose *links* stay lenient (they sit
+the repo-root README/CLAUDE/AGENTS pages too, whose *links* stay lenient (they sit
 outside the docs link contract) but whose *images* either exist on disk under
 the repo root or don't. (See `markdown::ImageResolver`.)
 
@@ -191,7 +198,7 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
   references resolve in the built site — as MkDocs does. Assets a repo-root
-  README/CLAUDE page references from outside the docs dir are copied too, on
+  README/CLAUDE/AGENTS page references from outside the docs dir are copied too, on
   reference (see Purpose).
 - Server-side per-page TOC (h2/h3) with scroll-spy.
 
