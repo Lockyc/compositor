@@ -33,6 +33,11 @@ pub struct EditSource {
     /// position -> file-line conversion must go through this map per output
     /// line rather than assuming a constant offset.
     pub line_map: Vec<Option<usize>>,
+    /// The absolute on-disk file this page renders from — the exact path
+    /// `/__edit` writes when the page is edited. Single-sources the write
+    /// target so a page whose source lives outside the docs dir (a repo-root
+    /// README/CLAUDE/AGENTS) is addressable, not only docs-tree pages.
+    pub path: PathBuf,
 }
 
 pub struct SiteModel {
@@ -131,6 +136,7 @@ pub fn build_site(
                     source: raw,
                     fm_lines,
                     line_map,
+                    path: docs_dir.join(&rel),
                 }),
             )
         } else {
@@ -255,5 +261,17 @@ mod tests {
         );
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_source_carries_absolute_source_path() {
+        let dir = scratch("editsource-path");
+        write(&dir, "guide.md", "# Guide\n\ntext\n");
+        let ex = Excluder::new(&dir, &dir, &[]);
+        let site = build_site(&dir, LinkPolicy::Lenient, &ex, true).unwrap();
+        let page = site.pages.iter().find(|p| p.url == "guide.html").unwrap();
+        let es = page.edit_source.as_ref().expect("edit mode populates edit_source");
+        assert_eq!(es.path, dir.join("guide.md"));
+        let _ = fs::remove_dir_all(&dir);
     }
 }
