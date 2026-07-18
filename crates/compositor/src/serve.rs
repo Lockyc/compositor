@@ -134,13 +134,15 @@ fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
 /// Also returns the `editable` map (site url -> on-disk source file), built
 /// alongside the render so it can never drift from what was actually served.
 /// The map holds **exactly** the pages that actually carry an editor — those
-/// whose `Page.edit_source` is `Some` — and nothing else: in v1 that is the
-/// docs-tree pages, whose `rel_path` is real relative to the docs dir. The
-/// read-only pages (the promoted repo-root README home, the surfaced
-/// CLAUDE/AGENTS nav pages, the generated index) render with `edit_source:
-/// None`, so they never enter the map and a `POST /__edit` naming their url is
-/// refused. The map being *exactly* the editable set is what stops `/__edit`
-/// writing a page that has no editor.
+/// whose `Page.edit_source` is `Some` — and nothing else: the docs-tree pages
+/// (`rel_path` real relative to the docs dir) plus the repo-root README
+/// (served at `/`), CLAUDE, and AGENTS pages, each mapped to its real
+/// repo-root file. The read-only pages — the generated index (no backing
+/// file) and the promoted docs-root `home`/`readme` `/`-alias (already
+/// editable at its own url) — render with `edit_source: None`, so they never
+/// enter the map and a `POST /__edit` naming their url is refused. The map
+/// being *exactly* the editable set is what stops `/__edit` writing a page
+/// that has no editor.
 #[allow(clippy::type_complexity)]
 pub(crate) fn build_pages(
     cfg: &SiteConfig,

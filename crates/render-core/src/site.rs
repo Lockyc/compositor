@@ -18,8 +18,11 @@ pub struct Page {
 }
 
 /// Everything a serve-mode client needs to map a rendered block back to a real
-/// file line and slice the verbatim source for an inline edit. Populated only
-/// when `build_site` is called with `edit = true`.
+/// file line and slice the verbatim source for an inline edit. Populated in
+/// edit mode only: by `build_site` (`edit = true`) for docs-tree pages, and by
+/// the repo-root surfacing paths in `compositor::render_page` (`resolve_home`'s
+/// repo-README tier, `surface_repo_agent_files`) for the repo-root README,
+/// CLAUDE, and AGENTS pages.
 pub struct EditSource {
     /// The page's full original file, frontmatter included.
     pub source: String,

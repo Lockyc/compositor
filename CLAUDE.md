@@ -161,19 +161,24 @@ bug and "fixed" against the reasoning that deferred it.
     frontmatter offset — is what converts a block's position to a real file line, and any
     admonition-touched block is marked `data-noedit`. (`assets/editor.js`.)
   - **v1 editable scope.** Docs-tree paragraphs/headings/lists/tables/blockquotes edit
-    inline; fenced code edits as raw source; **admonitions, wikilink-dense blocks, and the
-    repo-root README/CLAUDE/AGENTS pages are read-only** (`data-noedit`) — see
-    [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) for why each is deferred.
+    inline; fenced code edits as raw source; **admonitions and wikilink-dense blocks are
+    read-only** (`data-noedit`) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) for why each
+    is deferred. A surfaced page is editable whenever it has no *other* editable url to defer
+    to: the repo-root README (served at `/`), CLAUDE, and AGENTS pages are inline-editable by
+    this rule, while the generated index (no backing file) and the promoted docs-root
+    `home`/`readme` `/`-alias — already editable at its own url — stay read-only.
   - **Writes are authorized by a server-built url→source map, never a client-named path.**
     `/__edit` accepts only a url already in `ServedSite.editable` and writes exactly the
     file that map recorded, atomically (temp-write + rename); a url with no backing source
-    (a generated index) or off the map is refused. The map holds **only pages that carry an
-    editor** (`edit_source.is_some()`), so a read-only page's url is refused too — the map
-    *is* the write boundary. `/__edit` also enforces **same-origin** (`Sec-Fetch-Site`
-    `same-origin`/`none`, or `Origin` authority matching `Host`; a non-browser client sending
-    neither is allowed): editing is on by default on loopback, so this closes the
-    cross-origin-`fetch` vector a hostile page could otherwise use against the loopback port.
-    The embedding surface is writable by default with a read-only opt-out — see below.
+    (a generated index, or the promoted docs-root `/`-alias) or off the map is refused. The
+    map holds **only pages that carry an editor** (`edit_source.is_some()`) — which now
+    includes the repo-root README/CLAUDE/AGENTS pages alongside the docs tree — so any other
+    page's url is refused too; the map *is* the write boundary. `/__edit` also enforces
+    **same-origin** (`Sec-Fetch-Site` `same-origin`/`none`, or `Origin` authority matching
+    `Host`; a non-browser client sending neither is allowed): editing is on by default on
+    loopback, so this closes the cross-origin-`fetch` vector a hostile page could otherwise
+    use against the loopback port. The embedding surface is writable by default with a
+    read-only opt-out — see below.
 
 ## Layout
 

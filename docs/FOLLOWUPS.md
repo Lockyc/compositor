@@ -101,20 +101,13 @@ Not bugs that block use — conscious deferrals.
 
 ## Serve-mode inline editing
 
-- **Repo-root README / CLAUDE / AGENTS pages are read-only.** The docs-tree pages edit
-  inline, but the promoted repo-root landing (`resolve_home`) and the surfaced
-  CLAUDE/AGENTS nav pages (`surface_repo_instruction_file`) render via `render_markdown`
-  with `edit_source: None`, so they carry no editor. Deliberately deferred (a conscious
-  scope call): these are "lenient outside-the-docs-contract" pages whose source resolves
-  against the *repo root*, not the docs dir — a distinct path with its own edge cases, on
-  files more precious to risk on a WYSIWYG round-trip. To enable: make those two render
-  paths use `render_markdown_editable` and populate `edit_source` with the repo-root file
-  (the `editable` url→source map already resolves their targets). This holds for the whole
-  synthesized `/` landing, not just the repo-root README: every `resolve_home` tier that
-  *synthesizes* a landing — a promoted docs-root `home`/`readme`, the repo-root README, or
-  the generated index — renders `edit_source: None`, so `index.html` is read-only whatever
-  backs it. (A docs-root `index.md` is served at `/` directly rather than synthesized, so it
-  stays inline-editable under its own url.)
+- **The generated `/` index and the promoted docs-root `/`-alias are read-only.**
+  A synthesized generated index (`generated_index`) has no backing file to write.
+  A promoted docs-root `home`/`readme` (`resolve_home` tier 2) is served at `/` as a
+  copy of a page that is already inline-editable at its own url, so the `/` alias is
+  deliberately left read-only — edit the page at its own url. (The repo-root
+  README/CLAUDE/AGENTS pages, and a docs-root `index.md` served at `/` directly, are
+  inline-editable.)
 
 - **Admonitions and wikilink-dense blocks are not inline-editable** (`data-noedit`).
   `preprocess_admonitions` rewrites `!!!` blocks *before* comrak parses, so comrak's
