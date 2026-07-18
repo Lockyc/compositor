@@ -126,44 +126,6 @@ fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
     }
 }
 
-/// A docs-tree page at the root of the tree named `index`/`home`/`readme`
-/// (case-insensitive) — the same tier-1/2 predicate `resolve_home` uses
-/// internally to decide whether it promotes a docs-tree page rather than
-/// falling through to the repo-root README. Duplicated narrowly here (rather
-/// than exposed from `render_page`) so `build_pages` can tell whether a
-/// synthetic home entry aliases an existing, already-mapped docs page — in
-/// which case its bogus placeholder `rel_path` ("index.md") must not be
-/// resolved as if it were real.
-fn has_docs_root_candidate(site: &SiteModel) -> bool {
-    site.pages.iter().any(|p| {
-        p.rel_path.parent().is_none_or(|d| d.as_os_str().is_empty())
-            && p.rel_path
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .is_some_and(|s| {
-                    matches!(s.to_ascii_lowercase().as_str(), "index" | "home" | "readme")
-                })
-    })
-}
-
-/// The repo-root `README.md` (any case), if any — the one home-resolution
-/// tier the brief asks `build_pages` to map without re-deriving
-/// `resolve_home`'s full private tier order. Only meaningful when
-/// `!has_docs_root_candidate(site)`; see that function.
-fn repo_root_readme(project_dir: &Path) -> Option<PathBuf> {
-    std::fs::read_dir(project_dir)
-        .ok()?
-        .flatten()
-        .map(|e| e.path())
-        .find(|p| {
-            p.is_file()
-                && p.extension().and_then(|e| e.to_str()) == Some("md")
-                && p.file_stem()
-                    .and_then(|s| s.to_str())
-                    .is_some_and(|s| s.eq_ignore_ascii_case("readme"))
-        })
-}
-
 /// Render every page, injecting the reload script and — when `edit_enabled`
 /// — the editor scaffolding. `epoch` is baked into each page as the client's
 /// baseline, so it must equal the epoch `/__reload` will report for this
@@ -171,14 +133,14 @@ fn repo_root_readme(project_dir: &Path) -> Option<PathBuf> {
 ///
 /// Also returns the `editable` map (site url -> on-disk source file), built
 /// alongside the render so it can never drift from what was actually served.
-/// Population is deliberately conservative: a normal docs page's source
-/// always exists on disk by construction, but the promoted-home and
-/// surfaced-CLAUDE pages carry a `rel_path` that may not point at a real
-/// file (the promoted home's is a bare placeholder), so those only earn an
-/// entry when a real backing file is actually resolved — see
-/// `has_docs_root_candidate` / `repo_root_readme`. A page with no resolvable
-/// source (the generated index; a docs-tree-promoted home aliased under a
-/// second url) is simply absent from the map, not an error.
+/// The map holds **exactly** the pages that actually carry an editor — those
+/// whose `Page.edit_source` is `Some` — and nothing else: in v1 that is the
+/// docs-tree pages, whose `rel_path` is real relative to the docs dir. The
+/// read-only pages (the promoted repo-root README home, the surfaced
+/// CLAUDE/AGENTS nav pages, the generated index) render with `edit_source:
+/// None`, so they never enter the map and a `POST /__edit` naming their url is
+/// refused. The map being *exactly* the editable set is what stops `/__edit`
+/// writing a page that has no editor.
 #[allow(clippy::type_complexity)]
 pub(crate) fn build_pages(
     cfg: &SiteConfig,
@@ -205,33 +167,15 @@ pub(crate) fn build_pages(
 
     let mut editable = HashMap::new();
     if edit_enabled {
-        // Every normal `site.pages` entry (docs pages and the surfaced
-        // CLAUDE.html, if any) has a `rel_path` that is real relative to
-        // *either* the docs dir or the project root — try both, first hit
-        // wins, so a repo-root-surfaced page resolves without needing to
-        // know which case produced it.
+        // Exactly the pages that carry an editor: `edit_source: Some`, which in
+        // v1 is the docs-tree pages, whose `rel_path` is real relative to the
+        // docs dir. Read-only pages (the promoted repo-root README home, the
+        // surfaced CLAUDE/AGENTS nav pages, the generated index) are
+        // `edit_source: None` and so never enter the map — `/__edit` can then
+        // never write a page that has no editor.
         for p in &site.pages {
-            let candidate = docs.join(&p.rel_path);
-            let src = if candidate.is_file() {
-                Some(candidate)
-            } else {
-                let root_candidate = project_dir.join(&p.rel_path);
-                root_candidate.is_file().then_some(root_candidate)
-            };
-            if let Some(src) = src {
-                editable.insert(p.url.clone(), src);
-            }
-        }
-        // The synthetic home page's own `rel_path` is a placeholder, so it is
-        // resolved separately: only the repo-root-README tier is mapped here
-        // (see `repo_root_readme`'s doc comment for why the docs-promoted
-        // tier is left unmapped under `index.html` — its original url
-        // already covers the same file via the loop above).
-        if let Some(h) = &home {
-            if !has_docs_root_candidate(site) {
-                if let Some(readme) = repo_root_readme(project_dir) {
-                    editable.insert(h.url.clone(), readme);
-                }
+            if p.edit_source.is_some() {
+                editable.insert(p.url.clone(), docs.join(&p.rel_path));
             }
         }
     }
@@ -345,7 +289,45 @@ fn respond_text(req: Request, status: u16, msg: &str) {
     );
 }
 
+/// A request header's value by name (case-insensitive), or `None` if absent.
+fn req_header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
+    req.headers()
+        .iter()
+        .find(|h| h.field.equiv(name))
+        .map(|h| h.value.as_str())
+}
+
+/// Same-origin gate for the write endpoint. Editing is on-by-default on
+/// loopback, and a `text/plain`/simple POST is a CORS request that needs *no*
+/// preflight — so a hostile web page the user opens while `serve` is running
+/// could otherwise cross-origin `fetch` `http://127.0.0.1:PORT/__edit` and
+/// silently overwrite the served `.md` files. The loopback bind alone does not
+/// stop that: the browser, not the network, is the confused deputy. Policy:
+///
+/// - **`Sec-Fetch-Site` is the primary gate.** Modern browsers always send it
+///   on `fetch`, so require `same-origin` or `none`; reject `cross-site` /
+///   `same-site`. That single header closes the browser attack.
+/// - **`Origin` is the backstop** for any client that sends it but not
+///   `Sec-Fetch-Site`: its host:port must equal the request's `Host`.
+/// - **Neither header present** is a non-browser client (curl, a test, the
+///   CLI) — already loopback-gated and legitimate — so allow it.
+fn edit_is_same_origin(req: &Request) -> bool {
+    if let Some(site) = req_header(req, "Sec-Fetch-Site") {
+        return site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none");
+    }
+    if let Some(origin) = req_header(req, "Origin") {
+        // `Origin` is `scheme://authority`; compare its authority to `Host`.
+        let authority = origin.split_once("://").map_or(origin, |(_, a)| a);
+        return req_header(req, "Host").is_some_and(|host| authority.eq_ignore_ascii_case(host));
+    }
+    true
+}
+
 /// Handle `POST /__edit`: persist an edited page's Markdown to disk.
+///
+/// First gate is `edit_is_same_origin` — a cross-origin write is refused `403`
+/// before the body is even read, so a hostile page cannot use the on-by-default
+/// loopback editor as a write primitive (see that function).
 ///
 /// `state.editable` is the sole authority for what a url may write to (see
 /// its doc comment) — it only ever holds urls resolved to a real, existing
@@ -361,6 +343,11 @@ fn respond_text(req: Request, status: u16, msg: &str) {
 /// harmless scratch, never a partially-written page — and is logged rather
 /// than panicking, so the serve loop stays up.
 fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
+    if !edit_is_same_origin(&req) {
+        respond_text(req, 403, "cross-origin edit refused");
+        return;
+    }
+
     let mut body = Vec::new();
     let read = req
         .as_reader()
@@ -965,9 +952,22 @@ mod tests {
     }
 
     fn post(addr: std::net::SocketAddr, path: &str, body: &str) -> String {
+        post_with_headers(addr, path, body, &[])
+    }
+
+    fn post_with_headers(
+        addr: std::net::SocketAddr,
+        path: &str,
+        body: &str,
+        headers: &[(&str, &str)],
+    ) -> String {
         let mut stream = TcpStream::connect(addr).unwrap();
+        let mut extra = String::new();
+        for (name, value) in headers {
+            extra.push_str(&format!("{name}: {value}\r\n"));
+        }
         let req = format!(
-            "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{extra}Content-Length: {}\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(req.as_bytes()).unwrap();
@@ -1451,6 +1451,60 @@ mod tests {
         // An unmapped url is refused — cannot write an arbitrary path.
         let bad = post(addr, "/__edit", r#"{"url":"../etc/x.html","source":"pwn"}"#);
         assert!(bad.contains("403"), "resp: {bad}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_refuses_cross_origin_and_writes_nothing() {
+        // Editing is on-by-default on loopback, and a simple/`text/plain` POST
+        // is a CORS request needing no preflight — so a hostile page the user
+        // visits could cross-origin `fetch` `/__edit` and overwrite files. The
+        // same-origin gate must refuse a `Sec-Fetch-Site: cross-site` POST
+        // (`403`, no write) while the browser's own same-origin save — and a
+        // non-browser client sending no such header — still writes.
+        let tmp = std::env::temp_dir().join(format!("comp-editep-xorigin-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        // Cross-site is refused and must not touch the file.
+        let bad = post_with_headers(
+            addr,
+            "/__edit",
+            r##"{"url":"index.html","source":"# HACKED\n"}"##,
+            &[("Sec-Fetch-Site", "cross-site")],
+        );
+        assert!(bad.contains("403"), "cross-site must be refused: {bad}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
+
+        // The editor's own same-origin save still writes.
+        let ok = post_with_headers(
+            addr,
+            "/__edit",
+            r##"{"url":"index.html","source":"# Edited\n\npara\n"}"##,
+            &[("Sec-Fetch-Site", "same-origin")],
+        );
+        assert!(ok.contains("200 OK"), "same-origin must write: {ok}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# Edited\n\npara\n");
 
         std::fs::remove_dir_all(&tmp).ok();
     }

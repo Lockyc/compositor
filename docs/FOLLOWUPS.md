@@ -102,7 +102,12 @@ Not bugs that block use — conscious deferrals.
   against the *repo root*, not the docs dir — a distinct path with its own edge cases, on
   files more precious to risk on a WYSIWYG round-trip. To enable: make those two render
   paths use `render_markdown_editable` and populate `edit_source` with the repo-root file
-  (the `editable` url→source map already resolves their targets).
+  (the `editable` url→source map already resolves their targets). This holds for the whole
+  synthesized `/` landing, not just the repo-root README: every `resolve_home` tier that
+  *synthesizes* a landing — a promoted docs-root `home`/`readme`, the repo-root README, or
+  the generated index — renders `edit_source: None`, so `index.html` is read-only whatever
+  backs it. (A docs-root `index.md` is served at `/` directly rather than synthesized, so it
+  stays inline-editable under its own url.)
 
 - **Admonitions and wikilink-dense blocks are not inline-editable** (`data-noedit`).
   `preprocess_admonitions` rewrites `!!!` blocks *before* comrak parses, so comrak's
