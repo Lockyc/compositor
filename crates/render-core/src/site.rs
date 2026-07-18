@@ -270,7 +270,10 @@ mod tests {
         let ex = Excluder::new(&dir, &dir, &[]);
         let site = build_site(&dir, LinkPolicy::Lenient, &ex, true).unwrap();
         let page = site.pages.iter().find(|p| p.url == "guide.html").unwrap();
-        let es = page.edit_source.as_ref().expect("edit mode populates edit_source");
+        let es = page
+            .edit_source
+            .as_ref()
+            .expect("edit mode populates edit_source");
         assert_eq!(es.path, dir.join("guide.md"));
         let _ = fs::remove_dir_all(&dir);
     }
