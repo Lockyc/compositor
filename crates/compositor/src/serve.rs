@@ -6,6 +6,7 @@ use notify::{RecursiveMode, Watcher};
 use render_core::site::{build_site, SiteModel};
 use render_core::{Excluder, LinkPolicy};
 use std::collections::HashMap;
+use std::io::Read;
 use std::path::{Component, Path, PathBuf};
 use std::sync::{Arc, RwLock};
 use std::thread::JoinHandle;
@@ -309,6 +310,89 @@ fn respond(req: Request, status: u16, ctype: &str, body: Vec<u8>) {
     let _ = req.respond(resp);
 }
 
+/// Body of a `POST /__edit` request: the site url being edited and its full
+/// replacement Markdown source.
+#[derive(serde::Deserialize)]
+struct EditRequest {
+    url: String,
+    source: String,
+}
+
+/// A generous but bounded cap on the `/__edit` request body — large enough for
+/// any real Markdown page, small enough that a hostile or buggy client can't
+/// make this endpoint buffer an unbounded amount of memory.
+const MAX_EDIT_BODY: u64 = 10 * 1024 * 1024;
+
+fn respond_text(req: Request, status: u16, msg: &str) {
+    respond(
+        req,
+        status,
+        "text/plain; charset=utf-8",
+        msg.as_bytes().to_vec(),
+    );
+}
+
+/// Handle `POST /__edit`: persist an edited page's Markdown to disk.
+///
+/// `state.editable` is the sole authority for what a url may write to (see
+/// its doc comment) — it only ever holds urls resolved to a real, existing
+/// backing file. This still re-checks `is_safe` on the *client-supplied* url
+/// as defense-in-depth: the write path itself always comes from the map
+/// (never from the client), so a client can never name an arbitrary
+/// filesystem path, only ask "write to the url you already mapped."
+///
+/// The write is atomic: the new content lands in a temp sibling
+/// (`<path>.md.tmp-<pid>`) first, then an atomic rename replaces the target.
+/// A failure between those two steps (full disk, permissions) leaves the
+/// last-good file on disk untouched and may leave the temp file behind —
+/// harmless scratch, never a partially-written page — and is logged rather
+/// than panicking, so the serve loop stays up.
+fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
+    let mut body = Vec::new();
+    let read = req
+        .as_reader()
+        .take(MAX_EDIT_BODY + 1)
+        .read_to_end(&mut body);
+    if read.is_err() || body.len() as u64 > MAX_EDIT_BODY {
+        respond_text(req, 400, "bad request body");
+        return;
+    }
+
+    let edit: EditRequest = match serde_json::from_slice(&body) {
+        Ok(e) => e,
+        Err(_) => {
+            respond_text(req, 400, "malformed edit request");
+            return;
+        }
+    };
+
+    let mapped = state
+        .read()
+        .expect("state lock")
+        .editable
+        .get(&edit.url)
+        .cloned();
+    let path = match mapped {
+        Some(p) if is_safe(&edit.url) => p,
+        _ => {
+            respond_text(req, 403, "not an editable target");
+            return;
+        }
+    };
+
+    let tmp_path = path.with_extension(format!("md.tmp-{}", std::process::id()));
+    let result =
+        std::fs::write(&tmp_path, &edit.source).and_then(|()| std::fs::rename(&tmp_path, &path));
+    match result {
+        Ok(()) => respond_text(req, 200, "ok"),
+        Err(e) => {
+            eprintln!("edit write to {} failed: {e}", path.display());
+            let _ = std::fs::remove_file(&tmp_path);
+            respond_text(req, 500, "write failed");
+        }
+    }
+}
+
 fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     let raw = req.url().to_string();
     let path_only = raw.split(['?', '#']).next().unwrap_or("");
@@ -322,6 +406,18 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
             epoch.to_string().into_bytes(),
         );
         return;
+    }
+
+    // The one write path the browser can reach — only live at all when
+    // `edit_enabled` (loopback-only, decided once in `setup`). When disabled
+    // the endpoint must not exist off loopback, so it falls through to the
+    // ordinary page lookup below, which 404s for an unmapped url like this one.
+    if path_only == "/__edit" {
+        let enabled = state.read().expect("state lock").edit_enabled;
+        if enabled {
+            handle_edit(req, state);
+            return;
+        }
     }
 
     let url = request_url(path_only);
@@ -798,6 +894,18 @@ mod tests {
         resp
     }
 
+    fn post(addr: std::net::SocketAddr, path: &str, body: &str) -> String {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let req = format!(
+            "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).unwrap();
+        resp
+    }
+
     #[test]
     fn serves_page_and_reload_endpoint() {
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -1210,6 +1318,47 @@ mod tests {
         assert!(!pages["index.html"].contains("edit-toggle"));
         assert!(!pages["index.html"].contains("editor.js"));
         assert!(editable.is_empty());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_writes_only_mapped_urls_on_loopback() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        // A mapped url writes the file.
+        let ok = post(
+            addr,
+            "/__edit",
+            r##"{"url":"index.html","source":"# Edited\n\npara\n"}"##,
+        );
+        assert!(ok.contains("200 OK"), "resp: {ok}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# Edited\n\npara\n");
+
+        // An unmapped url is refused — cannot write an arbitrary path.
+        let bad = post(addr, "/__edit", r#"{"url":"../etc/x.html","source":"pwn"}"#);
+        assert!(bad.contains("403"), "resp: {bad}");
+
         std::fs::remove_dir_all(&tmp).ok();
     }
 
