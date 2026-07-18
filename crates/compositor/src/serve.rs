@@ -409,12 +409,13 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     }
 
     // The one write path the browser can reach — only live at all when
-    // `edit_enabled` (loopback-only, decided once in `setup`). When disabled
-    // the endpoint must not exist off loopback, so it falls through to the
-    // ordinary page lookup below, which 404s for an unmapped url like this one.
+    // `edit_enabled` (loopback-only, decided once in `setup`) *and* the
+    // request is a POST. When disabled, or when hit with any other method,
+    // the endpoint must not exist, so it falls through to the ordinary page
+    // lookup below, which 404s for an unmapped url like this one.
     if path_only == "/__edit" {
         let enabled = state.read().expect("state lock").edit_enabled;
-        if enabled {
+        if enabled && req.method() == &tiny_http::Method::Post {
             handle_edit(req, state);
             return;
         }
@@ -1358,6 +1359,189 @@ mod tests {
         // An unmapped url is refused — cannot write an arbitrary path.
         let bad = post(addr, "/__edit", r#"{"url":"../etc/x.html","source":"pwn"}"#);
         assert!(bad.contains("403"), "resp: {bad}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_rejects_malformed_json_and_writes_nothing() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-badjson-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let resp = post(addr, "/__edit", "not json");
+        assert!(resp.contains("400"), "resp: {resp}");
+        // A parse failure must not touch the file at all.
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_rejects_oversized_body_and_writes_nothing() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-oversize-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        // One byte over the cap: `take(MAX_EDIT_BODY + 1)` reads exactly that
+        // many bytes off the wire regardless of the (larger) Content-Length,
+        // so the length check trips even though the body isn't valid JSON.
+        let oversized = "a".repeat((MAX_EDIT_BODY + 1) as usize);
+        let resp = post(addr, "/__edit", &oversized);
+        assert!(resp.contains("400"), "resp: {resp}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_500s_on_write_failure_and_keeps_serving() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-ioerr-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        // Deliberately never created: the mapped target's parent directory
+        // doesn't exist, so the atomic write's temp-sibling `fs::write` must
+        // fail with an IO error rather than the file ever landing.
+        let bogus = docs.join("missing-dir").join("ghost.md");
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), bogus.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let resp = post(
+            addr,
+            "/__edit",
+            r#"{"url":"index.html","source":"still alive"}"#,
+        );
+        assert!(resp.contains("500"), "resp: {resp}");
+        assert!(!bogus.exists(), "write must not have landed");
+
+        // The failed write must not have taken the serve loop down: the same
+        // connection-per-request loop must still answer the next request.
+        let again = get(addr, "/__reload");
+        assert!(again.contains("200 OK"), "resp after failure: {again}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_404s_when_edit_disabled() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-disabled-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        // editable stays populated here only to prove the *enabled* flag,
+        // not the map, is what gates the endpoint's existence — in real use
+        // `build_pages` never populates `editable` when disabled either.
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: false,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let resp = post(addr, "/__edit", r#"{"url":"index.html","source":"pwn"}"#);
+        assert!(resp.contains("404"), "resp: {resp}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_rejects_non_post_and_falls_through_to_404() {
+        let tmp =
+            std::env::temp_dir().join(format!("comp-editep-getmethod-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n\npara\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        // GET must fall through to the ordinary 404 path, not be parsed as
+        // an edit request — proves the method guard, not just that GET
+        // can't carry a body.
+        let resp = get(addr, "/__edit");
+        assert!(resp.contains("404"), "resp: {resp}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
 
         std::fs::remove_dir_all(&tmp).ok();
     }
