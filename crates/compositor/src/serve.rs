@@ -1459,6 +1459,105 @@ mod tests {
     }
 
     #[test]
+    fn repo_root_pages_enter_editable_map_and_map_to_repo_root_files() {
+        let tmp = std::env::temp_dir().join(format!("comp-rootedit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("page.md"), "# P\n\nx\n").unwrap();
+        std::fs::write(tmp.join("README.md"), "# R\n\nreadme body\n").unwrap();
+        std::fs::write(tmp.join("CLAUDE.md"), "# C\n\nclaude body\n").unwrap();
+        std::fs::write(tmp.join("AGENTS.md"), "# A\n\nagents body\n").unwrap();
+        let cfg = SiteConfig {
+            site_name: "T".into(),
+            docs_dir: Some("docs".into()),
+            ..Default::default()
+        };
+        let ex = Arc::new(Excluder::new(&tmp, &docs, &[]));
+
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &ex, true).unwrap();
+        let (_pages, _root, editable) = build_pages(&cfg, &mut site, &tmp, 0, &ex, true).unwrap();
+
+        assert_eq!(editable["index.html"], tmp.join("README.md"));
+        assert_eq!(editable["CLAUDE.html"], tmp.join("CLAUDE.md"));
+        assert_eq!(editable["AGENTS.html"], tmp.join("AGENTS.md"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn generated_index_and_promoted_alias_stay_out_of_editable_map() {
+        let tmp = std::env::temp_dir().join(format!("comp-aliasedit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        // A docs-root `home.md` is promoted to `/` (tier 2) and is editable at
+        // its own url; the `/`-alias itself must not become independently
+        // writable.
+        std::fs::write(docs.join("home.md"), "# H\n\nh\n").unwrap();
+        let cfg = SiteConfig {
+            site_name: "T".into(),
+            docs_dir: Some("docs".into()),
+            ..Default::default()
+        };
+        let ex = Arc::new(Excluder::new(&tmp, &docs, &[]));
+
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &ex, true).unwrap();
+        let (_pages, _root, editable) = build_pages(&cfg, &mut site, &tmp, 0, &ex, true).unwrap();
+
+        assert!(
+            !editable.contains_key("index.html"),
+            "the / alias is read-only; edit home.md at its own url: {editable:?}"
+        );
+        assert!(
+            editable.contains_key("home.html"),
+            "the promoted page is editable at its own url: {editable:?}"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_writes_repo_root_claude_md() {
+        let tmp = std::env::temp_dir().join(format!("comp-rootwrite-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("page.md"), "# P\n").unwrap();
+        let claude = tmp.join("CLAUDE.md");
+        std::fs::write(&claude, "# C\n\nold body\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("CLAUDE.html".to_string(), claude.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let ok = post(
+            addr,
+            "/__edit",
+            r##"{"url":"CLAUDE.html","source":"# C\n\nnew body\n"}"##,
+        );
+        assert!(ok.contains("200 OK"), "resp: {ok}");
+        assert_eq!(
+            std::fs::read_to_string(&claude).unwrap(),
+            "# C\n\nnew body\n"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
     fn edit_endpoint_refuses_cross_origin_and_writes_nothing() {
         // Editing is on-by-default on loopback, and a simple/`text/plain` POST
         // is a CORS request needing no preflight — so a hostile page the user
