@@ -19,6 +19,7 @@ fn title_prefers_frontmatter_then_h1_then_filename() {
         &tmp,
         render_core::LinkPolicy::Strict,
         &render_core::Excluder::new(&tmp, &tmp, &[]),
+        false,
     )
     .unwrap();
     let by = |name: &str| {

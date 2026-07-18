@@ -9,6 +9,7 @@ fn page(rel: &str, title: &str) -> Page {
         title: title.into(),
         html: String::new(),
         toc: Vec::new(),
+        edit_source: None,
     }
 }
 

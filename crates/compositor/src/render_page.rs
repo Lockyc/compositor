@@ -192,6 +192,7 @@ pub fn resolve_home(
                 title: src.title.clone(),
                 html: src.html.clone(),
                 toc: src.toc.clone(),
+                edit_source: None,
             }));
         }
     }
@@ -246,6 +247,7 @@ fn repo_readme_home(
         title,
         html: rendered.html,
         toc: rendered.toc,
+        edit_source: None,
     }))
 }
 
@@ -319,6 +321,7 @@ pub fn surface_repo_claude(
         title: "CLAUDE".to_string(),
         html: rendered.html,
         toc: rendered.toc,
+        edit_source: None,
     });
     // Sit adjacent to Home: after a leading `index.html` page if the nav has one,
     // else first (the synthetic Home is rendered ahead of the nav list separately).
@@ -351,6 +354,7 @@ fn generated_index(site_name: &str, nav: &NavTree) -> Page {
         title: site_name.to_string(),
         html,
         toc: vec![],
+        edit_source: None,
     }
 }
 
@@ -442,6 +446,7 @@ mod tests {
             title: "T".to_string(),
             html: html.to_string(),
             toc: vec![],
+            edit_source: None,
         }
     }
 
@@ -756,6 +761,7 @@ mod tests {
             title: "T".to_string(),
             html: html.to_string(),
             toc,
+            edit_source: None,
         }
     }
 

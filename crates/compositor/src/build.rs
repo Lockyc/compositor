@@ -19,7 +19,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
         eprintln!("warning: {w}");
     }
 
-    let mut site = build_site(&docs, policy, &excluder)?;
+    let mut site = build_site(&docs, policy, &excluder, false)?;
     // The two pages compositor renders from outside the docs tree resolve their
     // images against the repo root; `images` records what must be copied.
     let images = crate::root_assets::RootAssets::new(project_dir, &docs, &excluder, policy);

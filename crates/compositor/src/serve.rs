@@ -242,7 +242,8 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
     for w in excluder.warnings() {
         eprintln!("warning: {w}");
     }
-    match build_site(docs, LinkPolicy::Lenient, &excluder) {
+    // TODO(task 4): pass the real edit flag once serve wires inline editing.
+    match build_site(docs, LinkPolicy::Lenient, &excluder, false) {
         Ok(mut site) => {
             let next_epoch = state.read().expect("state lock").epoch + 1;
             match build_pages(cfg, &mut site, project_dir, next_epoch, &excluder) {
@@ -377,7 +378,7 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>) -> Result<Serving> {
         eprintln!("warning: {w}");
     }
 
-    let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder)?;
+    let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, false)?;
     let (pages, root_assets) = build_pages(&cfg, &mut site, project_dir, 0, &excluder)?;
     let state = Arc::new(RwLock::new(ServedSite {
         pages,
@@ -811,7 +812,7 @@ mod tests {
             ..Default::default()
         };
         let excluder = Arc::new(Excluder::new(&tmp, &docs, &[]));
-        let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder).unwrap();
+        let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, false).unwrap();
         let (pages, root_assets) = build_pages(&cfg, &mut site, &tmp, 0, &excluder).unwrap();
         let state = RwLock::new(ServedSite {
             pages,

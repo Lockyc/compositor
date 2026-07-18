@@ -4,7 +4,7 @@ use walkdir::WalkDir;
 
 use crate::exclude::Excluder;
 use crate::frontmatter::split_frontmatter;
-use crate::markdown::{first_h1, render_markdown, LinkPolicy, TocEntry};
+use crate::markdown::{first_h1, render_markdown, render_markdown_editable, LinkPolicy, TocEntry};
 use crate::nav::{tree_from_pages, NavTree};
 use crate::wikilink::WikiIndex;
 
@@ -14,6 +14,25 @@ pub struct Page {
     pub title: String,
     pub html: String,
     pub toc: Vec<TocEntry>,
+    pub edit_source: Option<EditSource>,
+}
+
+/// Everything a serve-mode client needs to map a rendered block back to a real
+/// file line and slice the verbatim source for an inline edit. Populated only
+/// when `build_site` is called with `edit = true`.
+pub struct EditSource {
+    /// The page's full original file, frontmatter included.
+    pub source: String,
+    /// The number of lines `split_frontmatter` stripped off `source` before
+    /// rendering (0 for a page with no frontmatter block).
+    pub fm_lines: usize,
+    /// Task 2's per-output-line map for the body: `Some(source_line_idx)` for
+    /// a passthrough line, `None` for a line synthesized by the admonition
+    /// preprocessor. Faithful and unprocessed — a `None` region's line count
+    /// need not match its source span (see admonitions.rs), so any
+    /// position -> file-line conversion must go through this map per output
+    /// line rather than assuming a constant offset.
+    pub line_map: Vec<Option<usize>>,
 }
 
 pub struct SiteModel {
@@ -43,11 +62,16 @@ fn url_for(rel: &Path) -> String {
     s
 }
 
-pub fn build_site(docs_dir: &Path, policy: LinkPolicy, excluder: &Excluder) -> Result<SiteModel> {
+pub fn build_site(
+    docs_dir: &Path,
+    policy: LinkPolicy,
+    excluder: &Excluder,
+    edit: bool,
+) -> Result<SiteModel> {
     // Pass 1: collect metadata, known urls, and the wikilink index. Titles are
     // resolved here (frontmatter -> first H1 -> humanized stem) so the index can
     // carry each page's display title. Excluded paths are skipped.
-    let mut raws = Vec::new(); // (rel, page_dir, url, title, body)
+    let mut raws = Vec::new(); // (rel, page_dir, url, title, raw, body)
     let mut known_urls = std::collections::HashSet::new();
     let mut assets = std::collections::HashSet::new();
     let mut wiki = WikiIndex::new();
@@ -86,19 +110,42 @@ pub fn build_site(docs_dir: &Path, policy: LinkPolicy, excluder: &Excluder) -> R
             .unwrap_or_else(|| humanize_filename(&stem));
         known_urls.insert(url.clone());
         wiki.add_page(&url, &title, &rel, &stem, &fm.aliases);
-        raws.push((rel, page_dir, url, title, body));
+        raws.push((rel, page_dir, url, title, raw, body));
     }
     // Pass 2: render (md links, wikilinks, and images now resolvable).
     let images = crate::markdown::DocsAssets::new(assets, policy);
     let mut pages = Vec::new();
-    for (rel, page_dir, url, title, body) in raws {
-        let rendered = render_markdown(&body, &page_dir, &known_urls, &wiki, policy, &images)?;
+    for (rel, page_dir, url, title, raw, body) in raws {
+        let (rendered, edit_source) = if edit {
+            let (rendered, line_map) =
+                render_markdown_editable(&body, &page_dir, &known_urls, &wiki, policy, &images)?;
+            // `body` is a true suffix of `raw` (`split_frontmatter` either
+            // returns `raw` unchanged or a slice starting after the closing
+            // `---` line), so the byte offset where it starts is exactly the
+            // frontmatter-plus-delimiters prefix; counting that prefix's lines
+            // gives the number `split_frontmatter` stripped.
+            let fm_lines = raw[..raw.len() - body.len()].lines().count();
+            (
+                rendered,
+                Some(EditSource {
+                    source: raw,
+                    fm_lines,
+                    line_map,
+                }),
+            )
+        } else {
+            (
+                render_markdown(&body, &page_dir, &known_urls, &wiki, policy, &images)?,
+                None,
+            )
+        };
         pages.push(Page {
             url,
             rel_path: rel,
             title,
             html: rendered.html,
             toc: rendered.toc,
+            edit_source,
         });
     }
     let nav = tree_from_pages(&pages);
@@ -139,7 +186,7 @@ mod tests {
         );
         write(&d, "index.md", "Welcome — see [[Getting Started]].\n");
 
-        let site = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[])).unwrap();
+        let site = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[]), false).unwrap();
         let home = site.pages.iter().find(|p| p.url == "index.html").unwrap();
         assert!(
             home.html
@@ -154,7 +201,7 @@ mod tests {
     fn build_errors_on_unresolvable_wikilink_under_strict() {
         let d = scratch("strict-dangling");
         write(&d, "index.md", "Dangling [[Nowhere]].\n");
-        let err = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[]))
+        let err = build_site(&d, LinkPolicy::Strict, &Excluder::new(&d, &d, &[]), false)
             .err()
             .unwrap();
         assert!(err.to_string().contains("Nowhere"), "got: {err}");
@@ -165,7 +212,7 @@ mod tests {
     fn build_serve_lenient_degrades_unresolvable_wikilink() {
         let d = scratch("lenient-dangling");
         write(&d, "index.md", "Dangling [[Nowhere]].\n");
-        let site = build_site(&d, LinkPolicy::Lenient, &Excluder::new(&d, &d, &[])).unwrap();
+        let site = build_site(&d, LinkPolicy::Lenient, &Excluder::new(&d, &d, &[]), false).unwrap();
         let home = &site.pages[0];
         assert!(
             home.html.contains(r#"data-wikilink="true""#),
@@ -173,5 +220,40 @@ mod tests {
             home.html
         );
         let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn edit_mode_carries_source_and_emits_sourcepos() {
+        let tmp = std::env::temp_dir().join(format!("rc-edit-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&tmp).unwrap();
+        std::fs::write(tmp.join("index.md"), "---\ntitle: T\n---\n# H\n\npara\n").unwrap();
+        let ex = Excluder::new(&tmp, &tmp, &[]);
+
+        let site = build_site(&tmp, LinkPolicy::Lenient, &ex, true).unwrap();
+        let page = site.pages.iter().find(|p| p.url == "index.html").unwrap();
+        let es = page
+            .edit_source
+            .as_ref()
+            .expect("edit mode populates edit_source");
+        assert!(
+            es.source.starts_with("---\ntitle: T\n---\n"),
+            "full source incl frontmatter"
+        );
+        assert_eq!(es.fm_lines, 3, "3 frontmatter lines stripped");
+        // comrak stamped positions on the rendered blocks.
+        assert!(page.html.contains("data-sourcepos"), "html: {}", page.html);
+
+        // Non-edit mode leaves it clean (build output).
+        let plain = build_site(&tmp, LinkPolicy::Lenient, &ex, false).unwrap();
+        let pp = plain.pages.iter().find(|p| p.url == "index.html").unwrap();
+        assert!(pp.edit_source.is_none());
+        assert!(
+            !pp.html.contains("data-sourcepos"),
+            "build html must be clean: {}",
+            pp.html
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }

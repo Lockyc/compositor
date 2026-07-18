@@ -65,10 +65,61 @@ pub fn render_markdown(
     policy: LinkPolicy,
     images: &dyn ImageResolver,
 ) -> Result<Rendered> {
-    let arena = Arena::new();
-    let options = comrak_options();
     let preprocessed = crate::admonitions::preprocess_admonitions(body);
-    let root = parse_document(&arena, &preprocessed, &options);
+    render_inner(
+        &preprocessed,
+        page_dir,
+        known_urls,
+        wiki,
+        policy,
+        images,
+        false,
+    )
+}
+
+/// Edit-mode sibling of [`render_markdown`], used only by `serve`'s (future)
+/// inline-editing path: same rendering, plus comrak `sourcepos` attributes on
+/// every emitted block and the admonition preprocessor's per-output-line map
+/// back to `body`'s source lines (`None` for a synthesized admonition-wrapper
+/// line — see `preprocess_admonitions_mapped`).
+pub fn render_markdown_editable(
+    body: &str,
+    page_dir: &Path,
+    known_urls: &HashSet<String>,
+    wiki: &WikiIndex,
+    policy: LinkPolicy,
+    images: &dyn ImageResolver,
+) -> Result<(Rendered, Vec<Option<usize>>)> {
+    let (preprocessed, line_map) = crate::admonitions::preprocess_admonitions_mapped(body);
+    let rendered = render_inner(
+        &preprocessed,
+        page_dir,
+        known_urls,
+        wiki,
+        policy,
+        images,
+        true,
+    )?;
+    Ok((rendered, line_map))
+}
+
+/// Shared render body for [`render_markdown`] and [`render_markdown_editable`]:
+/// `preprocessed` is the already-admonition-expanded source; `sourcepos`
+/// toggles comrak's `data-sourcepos` output (edit mode only — `build` output
+/// must stay clean of it).
+fn render_inner(
+    preprocessed: &str,
+    page_dir: &Path,
+    known_urls: &HashSet<String>,
+    wiki: &WikiIndex,
+    policy: LinkPolicy,
+    images: &dyn ImageResolver,
+    sourcepos: bool,
+) -> Result<Rendered> {
+    let arena = Arena::new();
+    let mut options = comrak_options();
+    options.render.sourcepos = sourcepos;
+    let root = parse_document(&arena, preprocessed, &options);
 
     let first_h1 = find_first_h1(root);
     let toc = collect_toc(root);
