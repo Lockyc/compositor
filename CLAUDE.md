@@ -131,8 +131,9 @@ bug and "fixed" against the reasoning that deferred it.
   still render as Markdown in the *single* comrak pass; escaping raw HTML breaks that
   mechanism. It also matches MkDocs: raw HTML in author-trusted docs is allowed. Don't
   "harden" this without replacing the preprocessor first.
-- **The auto-generated tree nav is the only navigation.** An explicit-`nav` override was
-  once planned for M2 and **dropped** — don't reintroduce it as a missing piece.
+- **Navigation is auto-generated from the file tree today.** An explicit-`nav` override was
+  planned for M2 and **deferred** (not rejected) — revisit if a site needs manual section
+  ordering; the auto-generated tree nav is the default until then.
 - **Wikilink resolution honors the strict/lenient split** (see Purpose): `build`
   hard-errors on an unresolvable *or ambiguous* wikilink; `serve` picks the sorted-first
   candidate for an ambiguous one and renders an unresolvable one as a visibly-dead
