@@ -39,8 +39,10 @@ by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.htm
 link rewriting; and non-Markdown assets copied through verbatim. Images resolve
 against the page that references them — including a repo-root `README.md`,
 `CLAUDE.md`, or `AGENTS.md` surfaced into the site, whose images resolve against
-the repo root and are copied in on reference. Raw HTML in your Markdown renders
-as-is, matching MkDocs — compositor assumes author-trusted content.
+the repo root and are copied in on reference — for a Markdown `![](…)` and an
+author-written raw-HTML `<img src="…">` alike (the form READMEs use to set an
+image width). Raw HTML in your Markdown otherwise renders as-is, matching MkDocs —
+compositor assumes author-trusted content.
 
 A repo-root `CLAUDE.md` and/or `AGENTS.md` (when the docs dir is a subdir) gets
 its own top-level nav entry alongside Home — both on by default. Set

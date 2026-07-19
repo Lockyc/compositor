@@ -97,7 +97,9 @@ An unresolvable **image** is treated the same as an unresolvable link: a hard
 error under `build`, an honest 404 under `--lenient` and `serve`. This holds on
 the repo-root README/CLAUDE/AGENTS pages too, whose *links* stay lenient (they sit
 outside the docs link contract) but whose *images* either exist on disk under
-the repo root or don't. (See `markdown::ImageResolver`.)
+the repo root or don't. (See `markdown::ImageResolver`.) Both a Markdown `![](…)`
+**and** an author-written raw-HTML `<img src="…">` route through the resolver — see
+the raw-HTML bullet under *Current state* for the coverage boundary.
 
 ## Current state
 
@@ -130,7 +132,16 @@ bug and "fixed" against the reasoning that deferred it.
   The admonition preprocessor rewrites each block into an HTML wrapper whose body must
   still render as Markdown in the *single* comrak pass; escaping raw HTML breaks that
   mechanism. It also matches MkDocs: raw HTML in author-trusted docs is allowed. Don't
-  "harden" this without replacing the preprocessor first.
+  "harden" this without replacing the preprocessor first. **Because it passes through
+  untouched, an author-written `<img src="…">` (READMEs use it to set `width=`) would
+  otherwise bypass image resolution entirely — its relative `src` never rewritten, its
+  asset never copied, so it 404s.** `render_inner` closes that by walking `HtmlBlock`/
+  `HtmlInline` nodes and routing each **quoted `src`** through the same `resolve_image`
+  as `![](…)` (`rewrite_html_assets` in `markdown.rs`), so it gets identical resolve-
+  and-copy treatment. Deliberately narrow: `srcset` (and the `<source srcset>` dark/light
+  `<picture>` idiom), unquoted values, and entity-escaped urls are **deferred** — the
+  `<img src>` fallback still resolves, so a `<picture>` renders its default variant;
+  add srcset parsing when a repo needs the responsive variant served.
 - **Navigation is auto-generated from the file tree today.** An explicit-`nav` override was
   planned for M2 and **deferred** (not rejected) — revisit if a site needs manual section
   ordering; the auto-generated tree nav is the default until then.

@@ -131,6 +131,44 @@ fn build_promotes_readme_to_the_home() {
 }
 
 #[test]
+fn build_copies_a_repo_root_readme_html_img_asset() {
+    // The exact real-world shape: a repo-root README that uses a raw HTML
+    // `<img src="…">` (as READMEs do to set width=) rather than `![](…)`.
+    // The referenced asset lives outside the docs dir and must be resolved and
+    // copied into the site, or the home page's image 404s.
+    let tmp = std::env::temp_dir().join(format!("compositor-build-htmlimg-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::create_dir_all(tmp.join("assets")).unwrap();
+    fs::write(tmp.join("compositor.toml"), "site_name = \"S\"\n").unwrap();
+    // A docs page (not named index/home/readme) so the repo-root README is the
+    // home (resolve_home tier 3), rendering through RootAssets.
+    fs::write(tmp.join("docs/guide.md"), "# Guide\n\nbody").unwrap();
+    fs::write(
+        tmp.join("README.md"),
+        "# Welcome\n\n<img src=\"assets/logo.png\" width=\"128\">\n",
+    )
+    .unwrap();
+    fs::write(tmp.join("assets/logo.png"), b"\x89PNG fake bytes").unwrap();
+
+    // Strict: an unresolved HTML img would fail the build outright.
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+    // The asset is copied at its mirrored repo-relative path...
+    assert_eq!(
+        fs::read(tmp.join("site/assets/logo.png")).unwrap(),
+        b"\x89PNG fake bytes"
+    );
+    // ...and the home page's <img src> still points at it.
+    let index = fs::read_to_string(tmp.join("site/index.html")).unwrap();
+    assert!(
+        index.contains(r#"src="assets/logo.png""#),
+        "home img src not preserved: {index}"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
 fn build_emits_linked_stylesheet_and_script() {
     let tmp =
         std::env::temp_dir().join(format!("compositor-build-assetlink-{}", std::process::id()));

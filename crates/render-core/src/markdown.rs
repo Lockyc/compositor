@@ -132,6 +132,7 @@ fn render_inner(
         enum Kind {
             Link(Option<String>),
             Image(Option<String>),
+            Html(Option<String>),
             Wiki(WikiAction),
             None,
         }
@@ -142,6 +143,14 @@ fn render_inner(
                     Kind::Link(rewrite_link(&link.url, page_dir, known_urls, policy)?)
                 }
                 NodeValue::Image(img) => Kind::Image(resolve_image(&img.url, page_dir, images)?),
+                // Author-written raw HTML (`o.render.unsafe_`) reaches the output
+                // untouched by comrak, so an `<img src="…">` an author uses in place
+                // of `![](…)` — commonly to set width= — bypasses image resolution
+                // entirely. Route its relative `src` urls through the same resolver.
+                NodeValue::HtmlBlock(b) => {
+                    Kind::Html(rewrite_html_assets(&b.literal, page_dir, images)?)
+                }
+                NodeValue::HtmlInline(h) => Kind::Html(rewrite_html_assets(h, page_dir, images)?),
                 NodeValue::WikiLink(wl) => Kind::Wiki(plan_wikilink(
                     &wl.url,
                     &text_of(node),
@@ -163,6 +172,14 @@ fn render_inner(
                 let mut data = node.data.borrow_mut();
                 if let NodeValue::Image(ref mut img) = data.value {
                     img.url = new_url;
+                }
+            }
+            Kind::Html(Some(new_html)) => {
+                let mut data = node.data.borrow_mut();
+                match data.value {
+                    NodeValue::HtmlBlock(ref mut b) => b.literal = new_html,
+                    NodeValue::HtmlInline(ref mut h) => *h = new_html,
+                    _ => {}
                 }
             }
             Kind::Wiki(action) => wl_actions.push((node, action)),
@@ -331,6 +348,97 @@ fn resolve_image(url: &str, page_dir: &Path, images: &dyn ImageResolver) -> Resu
         ImageResolution::Keep => Ok(None),
         ImageResolution::Rewrite(u) => Ok(Some(format!("{u}{suffix}"))),
     }
+}
+
+/// Resolve relative asset urls inside an author-written raw-HTML fragment,
+/// routing each `src="…"` through the same [`ImageResolver`] the Markdown image
+/// path uses so an `<img src="…">` (or `<video>`/`<source src>`) gets identical
+/// resolve-and-copy treatment. Returns the rewritten fragment when any url
+/// changed, else `None`.
+///
+/// Deliberately narrow for now — quoted `src` only. `srcset` (and the `<source
+/// srcset>` dark/light `<picture>` idiom) is deferred: the `<img src>` fallback
+/// resolves here, so such a `<picture>` still renders its default variant; add
+/// srcset parsing when a repo needs the responsive variant served. Unquoted
+/// values and HTML-entity-escaped urls are likewise left as-authored.
+fn rewrite_html_assets(
+    html: &str,
+    page_dir: &Path,
+    images: &dyn ImageResolver,
+) -> Result<Option<String>> {
+    let mut out = String::with_capacity(html.len());
+    let mut cursor = 0;
+    let mut changed = false;
+    while let Some(attr) = next_src_attr(&html[cursor..]) {
+        // `attr` offsets are relative to the un-consumed tail; the value span
+        // excludes the surrounding quotes.
+        let value_start = cursor + attr.value_start;
+        let value_end = cursor + attr.value_end;
+        out.push_str(&html[cursor..value_start]);
+        let raw = &html[value_start..value_end];
+        match resolve_image(raw, page_dir, images)? {
+            Some(new) => {
+                out.push_str(&new);
+                changed = true;
+            }
+            None => out.push_str(raw),
+        }
+        out.push_str(&html[value_end..value_end + 1]); // closing quote
+        cursor = value_end + 1;
+    }
+    if !changed {
+        return Ok(None);
+    }
+    out.push_str(&html[cursor..]);
+    Ok(Some(out))
+}
+
+/// The value span of the next `src="…"` / `src='…'` attribute in `s`, byte
+/// offsets into `s` bounding the value between (but excluding) its quotes.
+struct SrcAttr {
+    value_start: usize,
+    value_end: usize,
+}
+
+/// Find the next `src` attribute with a quoted value. Matches `src` only as a
+/// whole attribute name — preceded by ASCII whitespace (so `data-src` is
+/// skipped) and not itself the prefix of a longer name like `srcset`/`srcdoc`
+/// (the byte after `src` must be `=` or whitespace).
+fn next_src_attr(s: &str) -> Option<SrcAttr> {
+    let b = s.as_bytes();
+    let mut i = 0;
+    while i + 3 <= b.len() {
+        let name_ok = (i == 0 || b[i - 1].is_ascii_whitespace())
+            && b[i..].len() >= 3
+            && b[i..i + 3].eq_ignore_ascii_case(b"src")
+            && matches!(b.get(i + 3), Some(c) if *c == b'=' || c.is_ascii_whitespace());
+        if name_ok {
+            // name end -> optional ws -> '=' -> optional ws -> quote.
+            let mut j = i + 3;
+            while j < b.len() && b[j].is_ascii_whitespace() {
+                j += 1;
+            }
+            if b.get(j) == Some(&b'=') {
+                j += 1;
+                while j < b.len() && b[j].is_ascii_whitespace() {
+                    j += 1;
+                }
+                if let Some(&q) = b.get(j) {
+                    if q == b'"' || q == b'\'' {
+                        let value_start = j + 1;
+                        if let Some(rel) = s[value_start..].find(q as char) {
+                            return Some(SrcAttr {
+                                value_start,
+                                value_end: value_start + rel,
+                            });
+                        }
+                    }
+                }
+            }
+        }
+        i += 1;
+    }
+    None
 }
 
 /// The planned replacement for one `[[wikilink]]` node.
@@ -929,6 +1037,129 @@ mod tests {
 
     fn no_images() -> DocsAssets {
         DocsAssets::new(HashSet::new(), LinkPolicy::Lenient)
+    }
+
+    /// A resolver that rewrites every relative image url to a fixed target,
+    /// used to prove the raw-HTML `src` path actually routes through resolution
+    /// (a `Keep` resolver like `DocsAssets` leaves the url untouched, which is
+    /// indistinguishable from "never resolved").
+    struct RewriteAll(&'static str);
+    impl ImageResolver for RewriteAll {
+        fn resolve(&self, _url: &str, _page_dir: &Path) -> Result<ImageResolution> {
+            Ok(ImageResolution::Rewrite(self.0.to_string()))
+        }
+    }
+
+    #[test]
+    fn html_img_src_is_resolved_and_rewritten() {
+        // A README's raw `<img src="…">` (set for its width= attribute) must get
+        // the same resolve-and-copy treatment as a Markdown `![](…)`.
+        let r = render_markdown(
+            r#"<img src="assets/logo.png" width="128">"#,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &RewriteAll("copied/logo.png"),
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"src="copied/logo.png""#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn html_img_src_inline_is_resolved() {
+        // Mid-paragraph `<img>` arrives as an inline-HTML node, not a block.
+        let r = render_markdown(
+            r#"before <img src="a.png"> after"#,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &RewriteAll("X"),
+        )
+        .unwrap();
+        assert!(r.html.contains(r#"src="X""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn html_img_multiple_srcs_in_one_block_all_resolve() {
+        let r = render_markdown(
+            "<div>\n<img src=\"a.png\">\n<img src='b.png'>\n</div>",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &RewriteAll("X"),
+        )
+        .unwrap();
+        // Both the double- and single-quoted src are resolved, each keeping its
+        // original quote char.
+        assert!(
+            r.html.contains(r#"src="X""#) && r.html.contains(r#"src='X'"#),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn html_img_external_src_is_never_resolved() {
+        // Shields.io badges are absolute; the resolver must never see or touch them.
+        let r = render_markdown(
+            r#"<img src="https://img.shields.io/x.svg"> <img src="/root.png">"#,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &RewriteAll("X"),
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"src="https://img.shields.io/x.svg""#)
+                && r.html.contains(r#"src="/root.png""#),
+            "got: {}",
+            r.html
+        );
+        assert!(!r.html.contains(r#"src="X""#), "got: {}", r.html);
+    }
+
+    #[test]
+    fn html_img_src_missing_errors_under_strict() {
+        let images = docs_assets(&[], LinkPolicy::Strict);
+        let err = render_markdown(
+            r#"<img src="gone.png">"#,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &images,
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("gone.png"), "got: {err}");
+    }
+
+    #[test]
+    fn html_src_prefix_attrs_are_not_mistaken_for_src() {
+        // `data-src` (preceded by `-`, not whitespace) and `srcset` (a longer
+        // name) must not be rewritten by the `src` scanner.
+        let r = render_markdown(
+            r#"<img data-src="a.png" srcset="b.png 2x" src="c.png">"#,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Lenient,
+            &RewriteAll("X"),
+        )
+        .unwrap();
+        assert!(
+            r.html.contains(r#"data-src="a.png""#) && r.html.contains(r#"srcset="b.png 2x""#),
+            "non-src attrs must be untouched: {}",
+            r.html
+        );
+        assert!(r.html.contains(r#"src="X""#), "got: {}", r.html);
     }
 
     fn docs_assets(paths: &[&str], policy: LinkPolicy) -> DocsAssets {
