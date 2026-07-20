@@ -235,7 +235,3 @@ Not bugs that block use — conscious deferrals.
   classic MkDocs and needs no JS or `localStorage`. Revisit only if the stateless
   feel proves annoying in daily use; then persist manual overrides in
   `localStorage`, merged with the active path.
-- **Active nav item is not auto-scrolled into view.** On a deep active page, the
-  `aria-current="page"` entry can sit below the nav's own scroll fold on load.
-  Deferred; add a small `scrollIntoView` progressive enhancement to
-  `compositor.js` if deep trees make this a real annoyance.

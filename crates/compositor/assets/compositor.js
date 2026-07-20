@@ -34,6 +34,22 @@
     });
   }
 
+  // --- Center the active nav item on load ---------------------------------
+  // The active path is expanded server-side, so a deep current page can land
+  // below the sidebar's own scroll fold. Center it within #nav's scroll box
+  // (never the window). scrollTop is clamped, so a shallow/top item stays put
+  // (delta <= 0 -> 0) and only a genuinely deep item scrolls. Progressive
+  // enhancement: no active item -> no-op.
+  if (menu) {
+    var active = menu.querySelector('a[aria-current="page"]');
+    if (active) {
+      var navRect = menu.getBoundingClientRect();
+      var aRect = active.getBoundingClientRect();
+      var delta = aRect.top - navRect.top - menu.clientHeight / 2 + aRect.height / 2;
+      menu.scrollTop += delta;
+    }
+  }
+
   // --- TOC scroll-spy -----------------------------------------------------
   var toc = document.getElementById("toc");
   if (toc && "IntersectionObserver" in window) {

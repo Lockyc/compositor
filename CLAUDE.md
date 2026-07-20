@@ -261,7 +261,9 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
   rendered as collapsible native `<details>`: the section(s) containing the current
   page render `open` server-side, per page (stateless — no JS, no persisted
   state); `generated_index`'s embedded nav renders with every section open via
-  `nav_to_html`'s `expand_all` flag.
+  `nav_to_html`'s `expand_all` flag. On load `compositor.js` centers the active
+  item within the sidebar's own scroll box (clamped, so a top/shallow item stays
+  put) — a progressive enhancement, not required for the nav to work.
 - Title resolution: `frontmatter.title` -> first `# H1` -> humanized filename.
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
