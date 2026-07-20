@@ -171,6 +171,7 @@
   list-style: none;
 }
 #nav .section > details > summary::-webkit-details-marker { display: none; }
+#nav .section > details > summary::after { display: none; }
 #nav .section > details > summary::before {
   content: "▸";
   display: inline-block;
