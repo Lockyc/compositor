@@ -354,6 +354,9 @@ details.admonition > summary.admonition-title {
   list-style: none;
 }
 details.admonition > summary.admonition-title::-webkit-details-marker { display: none; }
+/* Also suppress Pico's own `details summary::after` chevron (floated right) so
+   only our left caret shows — the ::-webkit rule above doesn't touch it. */
+details.admonition > summary.admonition-title::after { display: none; }
 details.admonition > summary.admonition-title::before {
   content: "▸";
   display: inline-block;
