@@ -225,3 +225,17 @@ Not bugs that block use — conscious deferrals.
 - **The `color-mix()` background tint has no fallback** for Safari <16.2 / older
   engines — the border and title still render (both plain `var()`), only the
   subtle tint is lost. Graceful, not a break.
+
+## Nav collapse
+
+- **Nav collapse is stateless — manual expand/collapse toggles are not persisted.**
+  Each page load recomputes which section(s) contain the current page and renders
+  only those `open` (`section_contains_url` in `compositor/src/render_page.rs`); a
+  section opened by hand re-closes on the next navigation. Deliberate — matches
+  classic MkDocs and needs no JS or `localStorage`. Revisit only if the stateless
+  feel proves annoying in daily use; then persist manual overrides in
+  `localStorage`, merged with the active path.
+- **Active nav item is not auto-scrolled into view.** On a deep active page, the
+  `aria-current="page"` entry can sit below the nav's own scroll fold on load.
+  Deferred; add a small `scrollIntoView` progressive enhancement to
+  `compositor.js` if deep trees make this a real annoyance.

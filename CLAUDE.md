@@ -121,7 +121,8 @@ bug and "fixed" against the reasoning that deferred it.
 | Markdown → `SiteModel`, link rewrite, image resolution | `render-core/src/markdown.rs`, `site.rs` |
 | Admonition preprocessor | `render-core/src/admonitions.rs` |
 | Wikilink index + resolution | `render-core/src/wikilink.rs` |
-| Tree nav | `render-core/src/nav.rs` |
+| Tree nav (tree model) | `render-core/src/nav.rs` |
+| Nav collapse/expand rendering | `compositor/src/render_page.rs` (`nav_to_html`, `node_html`, `section_contains_url`) |
 | `.gitignore` / `exclude` gating | `render-core/src/exclude.rs` |
 | Theme wrap, per-page TOC, prev/next pager | `compositor/src/render_page.rs` (`reading_order`) |
 | Repo-root asset resolution | `compositor/src/root_assets.rs` (`RootAssets`) |
@@ -256,7 +257,11 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
 - Frontmatter `title` and `aliases` keys (consume; ignore all other keys).
 - Internal `.md` -> `.html` link rewrite.
 - Heading anchors (via comrak `header_ids`).
-- Tree-derived nav (directories become sections, alphabetical, `index.md` first).
+- Tree-derived nav (directories become sections, alphabetical, `index.md` first),
+  rendered as collapsible native `<details>`: the section(s) containing the current
+  page render `open` server-side, per page (stateless — no JS, no persisted
+  state); `generated_index`'s embedded nav renders with every section open via
+  `nav_to_html`'s `expand_all` flag.
 - Title resolution: `frontmatter.title` -> first `# H1` -> humanized filename.
 - Non-Markdown files in the docs dir copied verbatim into the output, mirroring
   their relative path (images, downloads, data files a page links to), so those
