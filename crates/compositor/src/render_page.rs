@@ -84,7 +84,7 @@ pub fn render_page(
         // page's depth (the menu also carries a "Home" entry, see `nav_to_html`).
         home_href: format!("{prefix}index.html"),
         asset_prefix: prefix.clone(),
-        nav_html: nav_to_html(nav, &prefix, &page.url),
+        nav_html: nav_to_html(nav, &prefix, &page.url, false),
         toc_html,
         has_toc,
         body: &page.html,
@@ -450,7 +450,7 @@ fn generated_index(site_name: &str, nav: &NavTree) -> Page {
     let html = format!(
         "<h1>{}</h1>\n{}",
         html_escape(site_name),
-        nav_to_html(nav, "", "index.html")
+        nav_to_html(nav, "", "index.html", true)
     );
     Page {
         url: "index.html".to_string(),
@@ -477,7 +477,16 @@ fn is_root_named(page: &Page, stem: &str) -> bool {
     at_root && name_matches
 }
 
-fn nav_to_html(nav: &NavTree, prefix: &str, current_url: &str) -> String {
+/// True when any page in this subtree has `current_url` — used to auto-expand
+/// the active path's ancestor sections. Recurses into nested sections.
+fn section_contains_url(children: &[NavNode], current_url: &str) -> bool {
+    children.iter().any(|n| match n {
+        NavNode::Page { url, .. } => url == current_url,
+        NavNode::Section { children, .. } => section_contains_url(children, current_url),
+    })
+}
+
+fn nav_to_html(nav: &NavTree, prefix: &str, current_url: &str, expand_all: bool) -> String {
     let mut s = String::from("<ul>");
     // The menu leads with a "Home" link back to `/` — unless a real page already
     // occupies index.html (a docs-root index.md), which is itself the home and
@@ -498,13 +507,13 @@ fn nav_to_html(nav: &NavTree, prefix: &str, current_url: &str) -> String {
         ));
     }
     for node in &nav.0 {
-        node_html(node, prefix, current_url, &mut s);
+        node_html(node, prefix, current_url, expand_all, &mut s);
     }
     s.push_str("</ul>");
     s
 }
 
-fn node_html(node: &NavNode, prefix: &str, current_url: &str, s: &mut String) {
+fn node_html(node: &NavNode, prefix: &str, current_url: &str, expand_all: bool, s: &mut String) {
     match node {
         NavNode::Page { title, url } => {
             let current = if url == current_url {
@@ -520,14 +529,19 @@ fn node_html(node: &NavNode, prefix: &str, current_url: &str, s: &mut String) {
             ));
         }
         NavNode::Section { title, children } => {
+            let open = if expand_all || section_contains_url(children, current_url) {
+                " open"
+            } else {
+                ""
+            };
             s.push_str(&format!(
-                "<li class=\"section\"><span>{}</span><ul>",
+                "<li class=\"section\"><details{open}><summary>{}</summary><ul>",
                 html_escape(title)
             ));
             for c in children {
-                node_html(c, prefix, current_url, s);
+                node_html(c, prefix, current_url, expand_all, s);
             }
-            s.push_str("</ul></li>");
+            s.push_str("</ul></details></li>");
         }
     }
 }
@@ -1304,5 +1318,68 @@ mod tests {
             tmp.join("AGENTS.md")
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn nav_section_on_active_path_renders_open_details() {
+        let nav = NavTree(vec![
+            NavNode::Section {
+                title: "Guides".into(),
+                children: vec![NavNode::Page {
+                    title: "Install".into(),
+                    url: "guides/install.html".into(),
+                }],
+            },
+            NavNode::Section {
+                title: "Reference".into(),
+                children: vec![NavNode::Page {
+                    title: "API".into(),
+                    url: "reference/api.html".into(),
+                }],
+            },
+        ]);
+        let html = nav_to_html(&nav, "", "guides/install.html", false);
+        // Active section is open; the sibling is a closed <details>.
+        assert!(
+            html.contains(r#"<li class="section"><details open><summary>Guides</summary>"#),
+            "active section not open: {html}"
+        );
+        assert!(
+            html.contains(r#"<li class="section"><details><summary>Reference</summary>"#),
+            "inactive section not closed: {html}"
+        );
+    }
+
+    #[test]
+    fn nav_expand_all_opens_every_section() {
+        let nav = NavTree(vec![NavNode::Section {
+            title: "Reference".into(),
+            children: vec![NavNode::Page {
+                title: "API".into(),
+                url: "reference/api.html".into(),
+            }],
+        }]);
+        // current_url matches nothing in the tree, but expand_all forces open.
+        let html = nav_to_html(&nav, "", "index.html", true);
+        assert!(
+            html.contains(r#"<details open><summary>Reference</summary>"#),
+            "expand_all did not open section: {html}"
+        );
+    }
+
+    #[test]
+    fn nav_section_contains_url_is_recursive() {
+        let children = vec![NavNode::Section {
+            title: "Advanced".into(),
+            children: vec![NavNode::Page {
+                title: "Config".into(),
+                url: "guides/advanced/config.html".into(),
+            }],
+        }];
+        assert!(section_contains_url(
+            &children,
+            "guides/advanced/config.html"
+        ));
+        assert!(!section_contains_url(&children, "nope.html"));
     }
 }
