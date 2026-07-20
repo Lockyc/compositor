@@ -450,7 +450,7 @@ fn generated_index(site_name: &str, nav: &NavTree) -> Page {
     let html = format!(
         "<h1>{}</h1>\n{}",
         html_escape(site_name),
-        nav_to_html(nav, "", "index.html", true)
+        nav_to_html(nav, "", "index.html", /* expand_all */ true)
     );
     Page {
         url: "index.html".to_string(),
