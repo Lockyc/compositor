@@ -133,26 +133,59 @@
 #doc img { max-width: 100%; height: auto; }
 #toc { grid-area: toc; }
 
-/* --- Left nav. */
+/* --- Left nav. Denser than body text; sections are native <details> whose
+   summary carries a rotating caret; nested lists get a faint vertical rail so
+   nesting depth is legible. The active path's sections are rendered <details
+   open> server-side (stateless — see render_page::nav_to_html). */
 #nav {
   position: sticky;
   top: 4rem;
   align-self: start;
   max-height: calc(100vh - 5rem);
   overflow: auto;
+  font-size: 0.85rem;
+  line-height: 1.35;
 }
-#nav ul { list-style: none; padding-left: 0.75rem; margin: 0.25rem 0; }
+#nav ul { list-style: none; padding-left: 0.75rem; margin: 0.1rem 0; }
 #nav > ul { padding-left: 0; }
-#nav a { display: block; padding: 0.15rem 0; text-decoration: none; color: var(--pico-color); }
+#nav a { display: block; padding: 0.12rem 0; text-decoration: none; color: var(--pico-color); }
 #nav a:hover { color: var(--pico-primary); }
-#nav a[aria-current="page"] { color: var(--pico-primary); font-weight: 600; }
-#nav .section > span {
+#nav a[aria-current="page"] {
+  color: var(--pico-primary);
+  font-weight: 600;
+  /* subtle "you are here" accent against the rails */
+  box-shadow: inset 2px 0 0 var(--pico-primary);
+  padding-left: 0.4rem;
+  margin-left: -0.4rem;
+}
+
+/* Section = native <details>. The summary is the small-caps grouping header. */
+#nav .section > details > summary {
   display: block;
   margin-top: 0.75rem;
   color: var(--pico-muted-color);
   font-size: 0.8rem;
   text-transform: uppercase;
   letter-spacing: 0.03em;
+  cursor: pointer;
+  list-style: none;
+}
+#nav .section > details > summary::-webkit-details-marker { display: none; }
+#nav .section > details > summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 0.35rem;
+  transition: transform 0.15s ease;
+}
+#nav .section > details[open] > summary::before { transform: rotate(90deg); }
+
+/* Indent rails: a faint vertical line down each nested level. The children <ul>
+   inside a section sits alongside the rail, offset so the rail aligns under the
+   caret column rather than under the summary text. */
+#nav .section > details > ul {
+  border-left: 1px solid var(--pico-muted-border-color);
+  margin-left: 0.3rem;
+  padding-left: 0.75rem;
 }
 
 /* --- Right TOC. */
