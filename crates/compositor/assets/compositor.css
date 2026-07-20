@@ -148,6 +148,10 @@
 }
 #nav ul { list-style: none; padding-left: 0.75rem; margin: 0.1rem 0; }
 #nav > ul { padding-left: 0; }
+/* Pico's `aside li` adds 0.5rem vertical + horizontal padding per item (its
+   nav-element spacing); zero it so item spacing comes only from the anchor's
+   own compact padding below, not a chunky per-row inset. */
+#nav li { margin: 0; padding: 0; }
 #nav a { display: block; padding: 0.12rem 0; text-decoration: none; color: var(--pico-color); }
 #nav a:hover { color: var(--pico-primary); }
 #nav a[aria-current="page"] {
@@ -175,7 +179,12 @@
 #nav .section > details > summary::before {
   content: "▸";
   display: inline-block;
-  margin-right: 0.35rem;
+  /* The ▸ glyph renders small within its em, so it needs to be sized up from
+     the 0.8rem summary text to read as a proper caret against the label. */
+  font-size: 0.95rem;
+  line-height: 1;
+  vertical-align: -0.06em;
+  margin-right: 0.3rem;
   transition: transform 0.15s ease;
 }
 #nav .section > details[open] > summary::before { transform: rotate(90deg); }
