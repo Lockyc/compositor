@@ -32,7 +32,9 @@ around them stay byte-for-byte. It's off by default on any non-loopback bind
 can write files, and only over the loopback.
 
 **What you get, with no config:** a Pico.css shell (top bar, light/dark toggle
-that persists, a tree-nav marking the active page, a per-page TOC with
+that persists, a collapsible tree-nav whose sections are `<details>` — the
+active page's ancestor sections auto-open and the nav centres on the active
+item on load — a per-page TOC with
 scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
 MkDocs-style `!!!` admonitions and `???` collapsibles; `[[wikilinks]]` resolved
 by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.html`
@@ -49,7 +51,10 @@ its own top-level nav entry alongside Home — both on by default. Set
 `surface_claude_md = false` and/or `surface_agents_md = false` in
 `compositor.toml` to hide either one. When both files are present and
 `AGENTS.md`'s content is identical to `CLAUDE.md`'s (a symlink or a copy), only
-the CLAUDE entry shows, so the nav never carries a duplicate.
+the CLAUDE entry shows, so the nav never carries a duplicate. Under the
+loopback editor these surfaced repo-root pages — Home (`README.md`),
+`CLAUDE.md`, and `AGENTS.md` — are themselves editable in place, the same as
+any page under the docs dir.
 
 **There is no site search**, deliberately — see [`CLAUDE.md`](CLAUDE.md).
 
