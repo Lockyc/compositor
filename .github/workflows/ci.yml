@@ -13,7 +13,7 @@ jobs:
   test:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
 
       # No toolchain action: the runner's rustup reads rust-toolchain.toml and
       # installs the pinned channel + components. Pinning the action to @stable
