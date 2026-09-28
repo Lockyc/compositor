@@ -15,9 +15,8 @@ embeds.
 ## Status
 
 **In use, and still `0.x`.** compositor has replaced MkDocs on every site it was
-built for — it builds them all today, and the base-config repo it superseded is
-gone. It stays `0.x` because the CLI and `compositor.toml` surface may still
-move; the rendering is the settled part.
+built for, and builds them all today. It stays `0.x` because the CLI and
+`compositor.toml` surface may still move; the rendering is the settled part.
 
 **Two commands.** `build` renders a docs tree to static HTML. `serve` is a
 live-reload dev server: it watches the tree, rebuilds in memory on change, and
@@ -27,7 +26,7 @@ refreshes open browser tabs.
 in-place editor: click a paragraph, heading, list, table, or code block and edit it
 as rendered — changes autosave to the source `.md` and live-reload swaps the result
 back in. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
-around them stay byte-for-byte. It's off by default on any non-loopback bind
+around them stay byte-for-byte. It's off on any non-loopback bind
 (`serve --host 0.0.0.0`) and never present in `build` output — the served site alone
 can write files, and only over the loopback.
 
@@ -82,14 +81,22 @@ no runtime dependencies, for dropping onto a Linux box that has no Rust toolchai
 (which is exactly what it's there for). Linux is the only prebuilt target —
 everywhere else, build from source with the two lines above.
 
-A `compositor.toml` is optional. With one, it sets `site_name` (optionally
-`site_url`, `repo_url`, `docs_dir` [default `docs`], `out_dir` [default `site`],
-`exclude` [default: none], `surface_claude_md` [default `true`],
-`surface_agents_md` [default `true`]). Without one, defaults are synthesized: `site_name`
-from the folder name, and the docs are taken from `docs/` if that subdir exists,
-else the directory itself — so a bare folder of Markdown builds and serves with
-no config. (A `compositor.toml` that exists but is malformed is a hard error, not
-a silent fallback.)
+A `compositor.toml` is optional:
+
+| Key | Default | What it does |
+|---|---|---|
+| `site_name` | *required* in a file | Site title in the top bar and `<title>` |
+| `docs_dir` | `docs` | Docs tree to render, relative to `--dir` |
+| `out_dir` | `site` | Where `build` writes the rendered site |
+| `exclude` | `[]` | Docs-dir-relative path prefixes to skip (below) |
+| `surface_claude_md` | `true` | Show a repo-root `CLAUDE.md` as a top-level nav entry |
+| `surface_agents_md` | `true` | Show a repo-root `AGENTS.md` as a top-level nav entry |
+| `site_url`, `repo_url` | unset | Accepted; not yet used in the output |
+
+Without one, defaults are synthesized: `site_name` from the folder name, and the
+docs are taken from `docs/` if that subdir exists, else the directory itself — so
+a bare folder of Markdown builds and serves with no config. (A `compositor.toml`
+with a TOML syntax or type error is a hard error, not a silent fallback.)
 
 Paths your repo's `.gitignore` ignores are skipped — in rendering, asset-copy, and
 `serve`'s on-demand asset serving. Untracked scratch isn't site content, so no
@@ -113,7 +120,7 @@ every change:
 ./target/release/compositor serve --dir path/to/docs-repo --open
 ```
 
-(`--host` defaults to `127.0.0.1`; omit `--port` to let the OS pick a free port —
+(`--dir` defaults to `.` and `--host` to `127.0.0.1`; omit `--port` to let the OS pick a free port —
 the bound URL is printed on start — or pass `--port` to pin one. `--open` launches
 the default browser.)
 
