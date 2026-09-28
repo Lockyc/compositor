@@ -4,12 +4,9 @@ use serde::Deserialize;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
 pub struct SiteConfig {
     pub site_name: String,
-    #[serde(default)]
-    pub site_url: Option<String>,
-    #[serde(default)]
-    pub repo_url: Option<String>,
     #[serde(default)]
     pub docs_dir: Option<String>,
     #[serde(default)]
@@ -109,6 +106,19 @@ mod tests {
         let _ = std::fs::remove_dir_all(&p);
         std::fs::create_dir_all(&p).unwrap();
         p
+    }
+
+    #[test]
+    fn unknown_key_is_a_hard_error() {
+        let tmp = scratch("typo");
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\nout_dri = \"public\"\n",
+        )
+        .unwrap();
+        let err = format!("{:#}", SiteConfig::load(&tmp).unwrap_err());
+        assert!(err.contains("out_dri"), "{err}");
+        std::fs::remove_dir_all(&tmp).ok();
     }
 
     #[test]

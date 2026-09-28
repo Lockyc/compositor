@@ -91,12 +91,11 @@ A `compositor.toml` is optional:
 | `exclude` | `[]` | Docs-dir-relative path prefixes to skip (below) |
 | `surface_claude_md` | `true` | Show a repo-root `CLAUDE.md` as a top-level nav entry |
 | `surface_agents_md` | `true` | Show a repo-root `AGENTS.md` as a top-level nav entry |
-| `site_url`, `repo_url` | unset | Accepted; not yet used in the output |
 
 Without one, defaults are synthesized: `site_name` from the folder name, and the
 docs are taken from `docs/` if that subdir exists, else the directory itself — so
-a bare folder of Markdown builds and serves with no config. (A `compositor.toml`
-with a TOML syntax or type error is a hard error, not a silent fallback.)
+a bare folder of Markdown builds and serves with no config. (In a `compositor.toml`,
+an unknown key or a syntax/type error is a hard error, not a silent fallback.)
 
 Paths your repo's `.gitignore` ignores are skipped — in rendering, asset-copy, and
 `serve`'s on-demand asset serving. Untracked scratch isn't site content, so no
