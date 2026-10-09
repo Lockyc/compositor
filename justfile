@@ -74,15 +74,14 @@ release notes="RELEASE_NOTES.md":
     fi
     just gate
     git push origin dev
-    # main only ever fast-forwards to a release commit. Assert it hasn't diverged
-    # (the doc carve-out lands commits on main; one never merged back into dev would
-    # be silently dropped by `branch -f`) so we fail loud instead of losing it.
-    if ! git merge-base --is-ancestor main dev; then
-      echo "✗ main is not an ancestor of dev — it diverged." >&2
-      echo "  Run: git checkout dev && git merge main   (then re-run the release)." >&2
+    # main only ever fast-forwards to a release commit. Both ref updates are
+    # ff-only, so a diverged main (local or remote) fails here instead of being
+    # rewound and losing its out-of-band commit.
+    if ! git fetch -q origin main:main || ! git fetch -q . dev:main; then
+      echo "✗ main is checked out here, or diverged from dev — release from a dev checkout;" >&2
+      echo "  if diverged: git merge origin/main on dev, then re-run the release." >&2
       exit 1
     fi
-    git branch -f main dev
     git push origin main
     git tag -a "${tag}" -m "${tag}" main
     git push origin "${tag}"
