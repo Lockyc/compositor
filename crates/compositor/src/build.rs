@@ -9,8 +9,7 @@ use walkdir::WalkDir;
 pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
-    validate_out_dir(cfg.out_dir())?;
-    let out = project_dir.join(cfg.out_dir());
+    let out = resolve_out_dir(project_dir, &docs, cfg.out_dir())?;
     let _ = std::fs::remove_dir_all(&out);
     std::fs::create_dir_all(&out)?;
 
@@ -46,10 +45,13 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     Ok(())
 }
 
-/// Guard against an `out_dir` that would make `remove_dir_all(out)` delete the
-/// project directory itself (or an ancestor of it) — e.g. a misconfigured
-/// `out_dir = "."`, `".."`, or `""`.
-fn validate_out_dir(out_dir: &str) -> Result<()> {
+/// Resolve `out_dir` against `project_dir`, refusing any value that would make
+/// `remove_dir_all(out)` delete sources: the project directory, the docs
+/// directory, or an ancestor of either. That covers `"."`, `".."`, `""`, an
+/// absolute path such as `"/"` (an absolute `out_dir` replaces the join
+/// outright), and `out_dir == docs_dir`. An absolute `out_dir` outside the
+/// project (`/var/www/site`) is legitimate and resolves to itself.
+fn resolve_out_dir(project_dir: &Path, docs: &Path, out_dir: &str) -> Result<PathBuf> {
     if out_dir.trim().is_empty() {
         return Err(anyhow!("out_dir must not be empty"));
     }
@@ -75,7 +77,38 @@ fn validate_out_dir(out_dir: &str) -> Result<()> {
             _ => {}
         }
     }
-    Ok(())
+    let out = project_dir.join(out_dir);
+    let out_canon = canonical_lenient(&out);
+    for (what, protected) in [("project directory", project_dir), ("docs directory", docs)] {
+        if canonical_lenient(protected).starts_with(&out_canon) {
+            return Err(anyhow!(
+                "out_dir {out_dir:?} would delete the {what} {} on build; point it elsewhere",
+                protected.display()
+            ));
+        }
+    }
+    Ok(out)
+}
+
+/// `path` canonicalized through its deepest existing ancestor, so a not-yet-
+/// created `out_dir` still compares against canonical roots (macOS `/tmp` is
+/// `/private/tmp`). Components below that ancestor are appended as written;
+/// `resolve_out_dir` has already refused `.`/`..`, so they are plain names.
+fn canonical_lenient(path: &Path) -> PathBuf {
+    let mut tail = Vec::new();
+    let mut cur = path;
+    loop {
+        if let Ok(c) = std::fs::canonicalize(cur) {
+            return tail.iter().rev().fold(c, |acc: PathBuf, n| acc.join(n));
+        }
+        match (cur.parent(), cur.file_name()) {
+            (Some(parent), Some(name)) => {
+                tail.push(name.to_owned());
+                cur = parent;
+            }
+            _ => return path.to_path_buf(),
+        }
+    }
 }
 
 /// Mirror every non-Markdown file in `docs` into `out`, preserving relative
@@ -466,5 +499,77 @@ mod tests {
             "the emitted src must stay exactly as written: {home}"
         );
         std::fs::remove_dir_all(&tmp).ok();
+    }
+    #[test]
+    fn out_dir_equal_to_docs_dir_is_refused_and_sources_survive() {
+        // `remove_dir_all(out)` runs before rendering, so `out_dir == docs_dir`
+        // would wipe every source file the build is about to read.
+        let tmp = scratch("out-eq-docs");
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            "site_name = \"X\"\ndocs_dir = \"docs\"\nout_dir = \"docs\"\n",
+        )
+        .unwrap();
+
+        let err = run_build(&tmp, LinkPolicy::Lenient).expect_err("out_dir == docs_dir");
+        assert!(err.to_string().contains("out_dir"), "named error: {err}");
+        assert!(tmp.join("docs/index.md").exists(), "sources must survive");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn absolute_out_dir_at_the_project_is_refused_and_sources_survive() {
+        // An absolute `out_dir` replaces the project-relative join outright, so
+        // naming the project (or any ancestor) would delete it.
+        let tmp = scratch("out-abs-project");
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            format!(
+                "site_name = \"X\"\nout_dir = {:?}\n",
+                tmp.display().to_string()
+            ),
+        )
+        .unwrap();
+
+        let err = run_build(&tmp, LinkPolicy::Lenient).expect_err("out_dir == project");
+        assert!(err.to_string().contains("out_dir"), "named error: {err}");
+        assert!(tmp.join("docs/index.md").exists(), "sources must survive");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn resolve_out_dir_refuses_the_filesystem_root() {
+        // Asserted on the resolver, never through `run_build`: a regression
+        // here must fail a test, not delete `/`.
+        let tmp = scratch("out-root");
+        let docs = tmp.join("docs");
+        assert!(resolve_out_dir(&tmp, &docs, "/").is_err());
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn absolute_out_dir_outside_the_project_still_builds() {
+        let tmp = scratch("out-abs-ok");
+        let elsewhere = std::env::temp_dir().join(format!(
+            "compositor-build-out-abs-ok-dest-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&elsewhere);
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(
+            tmp.join("compositor.toml"),
+            format!(
+                "site_name = \"X\"\nout_dir = {:?}\n",
+                elsewhere.display().to_string()
+            ),
+        )
+        .unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+        assert!(elsewhere.join("index.html").exists());
+        std::fs::remove_dir_all(&tmp).ok();
+        std::fs::remove_dir_all(&elsewhere).ok();
     }
 }
