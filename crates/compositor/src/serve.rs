@@ -309,14 +309,21 @@ fn req_header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
 /// silently overwrite the served `.md` files. The loopback bind alone does not
 /// stop that: the browser, not the network, is the confused deputy. Policy:
 ///
-/// - **`Sec-Fetch-Site` is the primary gate.** Modern browsers always send it
-///   on `fetch`, so require `same-origin` or `none`; reject `cross-site` /
-///   `same-site`. That single header closes the browser attack.
+/// - **`Host` must name loopback** whenever it is present. A DNS-rebinding
+///   page (a hostile name re-pointed at 127.0.0.1) is same-origin with
+///   *itself*, so it passes both header checks below; only the name it
+///   connected under — `Host` — betrays it.
+/// - **`Sec-Fetch-Site` is the cross-origin gate.** Modern browsers always
+///   send it on `fetch`, so require `same-origin` or `none`; reject
+///   `cross-site` / `same-site`.
 /// - **`Origin` is the backstop** for any client that sends it but not
 ///   `Sec-Fetch-Site`: its host:port must equal the request's `Host`.
-/// - **Neither header present** is a non-browser client (curl, a test, the
-///   CLI) — already loopback-gated and legitimate — so allow it.
+/// - **None of these headers present** is a non-browser client (curl, a test,
+///   the CLI) — already loopback-gated and legitimate — so allow it.
 fn edit_is_same_origin(req: &Request) -> bool {
+    if req_header(req, "Host").is_some_and(|host| !host_header_is_loopback(host)) {
+        return false;
+    }
     if let Some(site) = req_header(req, "Sec-Fetch-Site") {
         return site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none");
     }
@@ -647,6 +654,16 @@ fn host_is_loopback(host: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether a `Host` header value (`name[:port]`, `[v6][:port]`) names a
+/// loopback host, by the same rule as `host_is_loopback`.
+fn host_header_is_loopback(value: &str) -> bool {
+    let name = match value.strip_prefix('[') {
+        Some(rest) => rest.split_once(']').map_or(rest, |(v6, _)| v6),
+        None => value.rsplit_once(':').map_or(value, |(name, _)| name),
+    };
+    host_is_loopback(name)
+}
+
 /// Bind the HTTP server. `None` port binds `:0` so the OS assigns a free
 /// ephemeral port (the default — never fails on "address in use"); `Some(p)`
 /// binds exactly `p` and errors loudly if it is taken (honoring `--port`).
@@ -967,12 +984,17 @@ mod tests {
         headers: &[(&str, &str)],
     ) -> String {
         let mut stream = TcpStream::connect(addr).unwrap();
+        // A browser always sends the address it connected to as `Host`; a
+        // test that passes its own `Host` replaces it.
         let mut extra = String::new();
+        if !headers.iter().any(|(n, _)| n.eq_ignore_ascii_case("Host")) {
+            extra.push_str(&format!("Host: {addr}\r\n"));
+        }
         for (name, value) in headers {
             extra.push_str(&format!("{name}: {value}\r\n"));
         }
         let req = format!(
-            "POST {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n{extra}Content-Length: {}\r\n\r\n{body}",
+            "POST {path} HTTP/1.1\r\nConnection: close\r\n{extra}Content-Length: {}\r\n\r\n{body}",
             body.len()
         );
         stream.write_all(req.as_bytes()).unwrap();
@@ -1883,5 +1905,85 @@ mod tests {
         assert!(get(addr, "/kept.txt").contains("200 OK"));
 
         std::fs::remove_dir_all(&tmp).ok();
+    }
+    #[test]
+    fn edit_endpoint_refuses_a_non_loopback_host_and_writes_nothing() {
+        // DNS rebinding: a hostile name re-pointed at 127.0.0.1 is same-origin
+        // with itself, so its POST carries `Sec-Fetch-Site: same-origin` and an
+        // `Origin` matching `Host` — every header-only check passes. Only the
+        // `Host` name gives it away.
+        let tmp = std::env::temp_dir().join(format!("comp-editep-rebind-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let src = docs.join("index.md");
+        std::fs::write(&src, "# One\n").unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), src.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let body = r##"{"url":"index.html","source":"# HACKED\n"}"##;
+        for (host, origin) in [
+            ("evil.example:1", "http://evil.example:1"),
+            ("127.0.0.1.evil.example", "http://127.0.0.1.evil.example"),
+        ] {
+            let bad = post_with_headers(
+                addr,
+                "/__edit",
+                body,
+                &[
+                    ("Host", host),
+                    ("Sec-Fetch-Site", "same-origin"),
+                    ("Origin", origin),
+                ],
+            );
+            assert!(bad.contains("403"), "Host {host} must be refused: {bad}");
+            assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n");
+        }
+
+        // Every loopback spelling a browser can send still writes.
+        let port = addr.port();
+        for host in [
+            format!("127.0.0.1:{port}"),
+            format!("localhost:{port}"),
+            format!("[::1]:{port}"),
+            "localhost".to_string(),
+        ] {
+            let ok = post_with_headers(
+                addr,
+                "/__edit",
+                r##"{"url":"index.html","source":"# Edited\n"}"##,
+                &[("Host", &host), ("Sec-Fetch-Site", "same-origin")],
+            );
+            assert!(ok.contains("200 OK"), "Host {host} must write: {ok}");
+        }
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# Edited\n");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn host_header_is_loopback_strips_the_port() {
+        assert!(host_header_is_loopback("127.0.0.1:8000"));
+        assert!(host_header_is_loopback("LOCALHOST:1"));
+        assert!(host_header_is_loopback("[::1]:8000"));
+        assert!(host_header_is_loopback("[::1]"));
+        assert!(!host_header_is_loopback("evil.example:8000"));
+        assert!(!host_header_is_loopback("localhost.evil.example"));
+        assert!(!host_header_is_loopback("0.0.0.0:8000"));
+        assert!(!host_header_is_loopback(""));
     }
 }

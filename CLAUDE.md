@@ -187,10 +187,10 @@ bug and "fixed" against the reasoning that deferred it.
     map holds **only pages that carry an editor** (`edit_source.is_some()`) — which now
     includes the repo-root README/CLAUDE/AGENTS pages alongside the docs tree — so any other
     page's url is refused too; the map *is* the write boundary. `/__edit` also enforces
-    **same-origin** (`Sec-Fetch-Site` `same-origin`/`none`, or `Origin` authority matching
-    `Host`; a non-browser client sending neither is allowed): editing is on by default on
-    loopback, so this closes the cross-origin-`fetch` vector a hostile page could otherwise
-    use against the loopback port. The embedding surface is writable by default with a
+    **same-origin** (a loopback `Host`, then `Sec-Fetch-Site` `same-origin`/`none` or `Origin`
+    authority matching `Host`; a non-browser client sending none is allowed): editing is on by
+    default on loopback, so this closes the cross-origin-`fetch` and DNS-rebinding vectors a
+    hostile page could otherwise use against the loopback port. The embedding surface is writable by default with a
     read-only opt-out — see below.
 
 ## Layout
