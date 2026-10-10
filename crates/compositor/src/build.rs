@@ -572,4 +572,26 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
         std::fs::remove_dir_all(&elsewhere).ok();
     }
+    #[test]
+    fn bare_folder_build_never_publishes_the_git_dir() {
+        // No `docs/` subdir: the docs dir is the repo root, so the asset walk
+        // passes straight over `.git/`.
+        let tmp =
+            std::env::temp_dir().join(format!("compositor-build-bare-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".git/refs")).unwrap();
+        std::fs::write(tmp.join(".git/config"), "[remote]\n").unwrap();
+        std::fs::write(tmp.join(".git/refs/HEAD"), "ref").unwrap();
+        std::fs::write(tmp.join("index.md"), "# Home\n").unwrap();
+        std::fs::write(tmp.join("logo.png"), "PNG").unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        assert!(tmp.join("site/logo.png").exists(), "ordinary asset copied");
+        assert!(
+            !tmp.join("site/.git").exists(),
+            "the git database must never reach the site"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

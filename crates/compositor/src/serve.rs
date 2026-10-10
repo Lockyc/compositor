@@ -1860,4 +1860,28 @@ mod tests {
         h.shutdown();
         std::fs::remove_dir_all(&tmp).ok();
     }
+    #[test]
+    fn on_demand_asset_never_serves_the_git_dir() {
+        // A bare-folder site serves the repo root as its docs dir; `.git/` is
+        // never gitignored, so it needs its own refusal or `serve --host
+        // 0.0.0.0` hands out the repo's config and full history.
+        let tmp = std::env::temp_dir().join(format!("compositor-serve-git-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join(".git")).unwrap();
+        std::fs::write(tmp.join(".git/config"), "[remote]\n").unwrap();
+        std::fs::write(tmp.join("kept.txt"), "public").unwrap();
+
+        let state = sample_state(Excluder::new(&tmp, &tmp, &[]));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs_for_thread = tmp.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
+
+        let git = get(addr, "/.git/config");
+        assert!(git.contains("404"), "git dir must not be served: {git}");
+        assert!(get(addr, "/kept.txt").contains("200 OK"));
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
 }

@@ -40,7 +40,7 @@ no `compositor.toml` and no special files to work:
   ignores nothing (the graceful default a host app hits serving a bare Markdown
   folder). Gitignored means never rendered — there is deliberately no opt-out and
   no re-inclusion list; the way to publish a path is to stop ignoring it in git.
-  (See `exclude::Excluder`.)
+  A `.git` path is never published, ignored or not. (See `exclude::Excluder`.)
 - **`exclude`** (optional, in `compositor.toml`) → a list of docs-dir-relative path
   prefixes skipped in both rendering and asset-copy, and honored by `serve`'s
   on-demand asset serving too — the `exclude_docs` analog, e.g.

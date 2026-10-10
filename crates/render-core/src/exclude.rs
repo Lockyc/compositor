@@ -3,9 +3,12 @@ use ignore::Match;
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
-/// Decides whether a docs-tree path is kept out of the site. Two independent
-/// rules, unioned:
+/// Decides whether a docs-tree path is kept out of the site. Three rules,
+/// unioned:
 ///
+/// - any `.git` path component, always — the git database is never site
+///   content and no `.gitignore` names it, so a docs dir that *is* the repo
+///   root would otherwise publish the repo's config and full history.
 /// - `compositor.toml`'s `exclude` — docs-dir-relative path prefixes, for a
 ///   *tracked* tree that is kept in git but deliberately not published.
 /// - the repo's `.gitignore` files — for *untracked* scratch, which is not site
@@ -54,6 +57,9 @@ impl Excluder {
 
     /// True when `rel` — a docs-dir-relative path to a **file** — is kept out.
     pub fn is_excluded(&self, rel: &Path) -> bool {
+        if in_git_dir(rel) {
+            return true;
+        }
         // `exclude` first, so it wins over a gitignore `!negation`: it is
         // compositor's own config, and git has no say in overriding it.
         if matches_patterns(rel, &self.patterns) {
@@ -81,7 +87,10 @@ impl Excluder {
     /// `.gitignore` — what actually hides scratch in practice — is.
     pub fn is_gitignored(&self, abs: &Path) -> bool {
         match &self.repo_root {
-            Some(root) if abs.starts_with(root) => self.is_ignored_under(root, abs),
+            Some(root) if abs.starts_with(root) => {
+                in_git_dir(abs.strip_prefix(root).unwrap_or(abs))
+                    || self.is_ignored_under(root, abs)
+            }
             // Not a git repo, or a path outside it: nothing is ignored.
             _ => false,
         }
@@ -168,6 +177,12 @@ impl Excluder {
 /// silently stop respecting `.gitignore`.
 fn canonical(p: &Path) -> PathBuf {
     std::fs::canonicalize(p).unwrap_or_else(|_| p.to_path_buf())
+}
+
+/// True when `rel` is inside a git dir (this repo's or a nested one's), or is
+/// the `.git` entry itself — in a linked worktree that entry is a file.
+fn in_git_dir(rel: &Path) -> bool {
+    rel.components().any(|c| c.as_os_str() == ".git")
 }
 
 /// True when `rel` falls under any exclude pattern. Each pattern is a path
@@ -524,5 +539,20 @@ mod tests {
         assert!(!e.is_excluded(Path::new("superpowers/note.md")));
         let _ = fs::remove_dir_all(&d);
         let _ = fs::remove_dir_all(&elsewhere);
+    }
+    #[test]
+    fn git_dir_is_always_excluded() {
+        // `.gitignore` never names `.git/`, so without a rule of its own the
+        // whole git database ships whenever the docs dir is the repo root.
+        let d = project("git-dir", true);
+        let e = Excluder::new(&d, &d, &[]);
+        assert!(e.is_excluded(Path::new(".git/config")));
+        assert!(e.is_excluded(Path::new(".git/objects/pack/p.pack")));
+        assert!(e.is_excluded(Path::new("sub/.git/HEAD")), "nested repo too");
+        assert!(e.is_excluded(Path::new(".git")), "worktree `.git` file");
+        assert!(e.is_gitignored(&canonical(&d).join(".git/config")));
+        assert!(!e.is_excluded(Path::new(".github/workflows/ci.yml")));
+        assert!(!e.is_excluded(Path::new("guide.git.png")));
+        let _ = fs::remove_dir_all(&d);
     }
 }
