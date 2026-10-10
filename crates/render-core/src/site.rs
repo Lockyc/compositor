@@ -29,7 +29,8 @@ pub struct EditSource {
     /// The number of lines `split_frontmatter` stripped off `source` before
     /// rendering (0 for a page with no frontmatter block).
     pub fm_lines: usize,
-    /// Task 2's per-output-line map for the body: `Some(source_line_idx)` for
+    /// The per-output-line map from `preprocess_admonitions_mapped` for the
+    /// body: `Some(source_line_idx)` for
     /// a passthrough line, `None` for a line synthesized by the admonition
     /// preprocessor. Faithful and unprocessed — a `None` region's line count
     /// need not match its source span (see admonitions.rs), so any

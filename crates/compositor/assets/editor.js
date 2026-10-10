@@ -32,7 +32,7 @@
   var url = payload.url || "";
 
   // Tags whose rendered block maps cleanly onto an editable region of
-  // Markdown source. Matches the contract in task-8-brief.md / CLAUDE.md.
+  // Markdown source. Matches the v1 editable scope in CLAUDE.md.
   var EDITABLE_TAGS = {
     P: true,
     H1: true,
@@ -713,7 +713,7 @@
     return false;
   };
 
-  // Exposed for the end-to-end verification pass (next task) -- lets a driver
+  // Exposed for end-to-end verification drivers -- lets a driver
   // call reconstruct()/serializeBlock() directly. Not part of any runtime path.
   window.__compositorEditor = {
     reconstruct: reconstruct,
