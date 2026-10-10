@@ -256,7 +256,13 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
   case-insensitive; `[[Name|label]]` overrides the text, `[[Name#anchor]]` deep-links.
 - Frontmatter `title` and `aliases` keys (consume; ignore all other keys).
 - Internal `.md` -> `.html` link rewrite.
-- Heading anchors (via comrak `header_ids`).
+- Heading anchors: comrak's `header_ids` slug, or an explicit MkDocs attr_list id —
+  `## Heading {#some-id}` (also `{ #id }`, `{: #id }`; id chars `[A-Za-z0-9_.:-]`) is
+  stripped from the heading text and becomes its id, in the HTML, TOC, title and
+  `[[Name#some-id]]` deep-links alike. Explicit ids are emitted as written (a
+  duplicate stays a duplicate) and are reserved before auto ids, which dedupe around
+  them with `-1`, `-2`. Any other trailing `{…}` stays literal text. (See
+  `markdown::assign_heading_ids`.)
 - Tree-derived nav (directories become sections, alphabetical, `index.md` first),
   rendered as collapsible native `<details>`: the section(s) containing the current
   page render `open` server-side, per page (stateless — no JS, no persisted

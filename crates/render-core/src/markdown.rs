@@ -1,10 +1,13 @@
 use crate::wikilink::{relative_url, WikiIndex, WikiResolution, WikiTarget};
 use anyhow::{anyhow, Result};
-use comrak::nodes::{AstNode, NodeLink, NodeValue, NodeWikiLink};
+use comrak::adapters::{HeadingAdapter, HeadingMeta};
+use comrak::nodes::{AstNode, NodeLink, NodeValue, NodeWikiLink, Sourcepos};
 use comrak::plugins::syntect::SyntectAdapter;
 use comrak::{format_html_with_plugins, parse_document, Anchorizer, Arena, Options, Plugins};
 use std::collections::HashSet;
+use std::io::{self, Write};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 #[derive(Debug)]
 pub struct Rendered {
@@ -35,9 +38,9 @@ pub fn comrak_options<'c>() -> Options<'c> {
     o.extension.tasklist = true;
     o.extension.strikethrough = true;
     o.extension.autolink = true;
-    // heading anchors. The empty prefix is load-bearing: `collect_toc` assumes
-    // comrak's emitted heading ids are the bare Anchorizer slug with no
-    // prefix — changing this string here would desync TOC hrefs from anchors.
+    // Heading anchors. Every render path installs `HeadingIds`, which owns the
+    // emitted ids, so comrak's own header_ids pass never runs there; it stays on
+    // so a bare `format_html` with these options still anchors its headings.
     o.extension.header_ids = Some(String::new());
     o.extension.wikilinks_title_after_pipe = true;
     // Emit raw HTML (the admonition preprocessor injects <div>/<details>
@@ -54,6 +57,7 @@ pub fn first_h1(body: &str) -> Option<String> {
     let arena = Arena::new();
     let options = comrak_options();
     let root = parse_document(&arena, body, &options);
+    take_explicit_ids(root);
     find_first_h1(root)
 }
 
@@ -121,8 +125,8 @@ fn render_inner(
     options.render.sourcepos = sourcepos;
     let root = parse_document(&arena, preprocessed, &options);
 
+    let explicit_ids = take_explicit_ids(root);
     let first_h1 = find_first_h1(root);
-    let toc = collect_toc(root);
 
     // First pass (read-only w.r.t. tree shape): rewrite md-link urls in place and
     // plan each wikilink's replacement. We defer tree surgery (detach/append) to a
@@ -191,9 +195,20 @@ fn render_inner(
         apply_wikilink(node, action, &arena);
     }
 
+    // Ids are assigned after wikilink surgery: a heading's auto id is the slug
+    // of its *rendered* text, which is what comrak itself would anchorize.
+    let headings = assign_heading_ids(root, explicit_ids);
+    let toc = headings
+        .iter()
+        .filter(|h| h.level == 2 || h.level == 3)
+        .cloned()
+        .collect();
+    let heading_ids = HeadingIds::new(headings.into_iter().map(|h| h.id).collect());
+
     let adapter = SyntectAdapter::new(Some("InspiredGitHub"));
     let mut plugins = Plugins::default();
     plugins.render.codefence_syntax_highlighter = Some(&adapter);
+    plugins.render.heading_adapter = Some(&heading_ids);
 
     let mut out = Vec::new();
     format_html_with_plugins(root, &options, &mut out, &plugins)
@@ -575,26 +590,177 @@ fn find_first_h1<'a>(node: &'a AstNode<'a>) -> Option<String> {
     None
 }
 
-/// Collect the page's `h2`/`h3` headings for the table of contents. Every
-/// heading (all levels) is fed through a single `Anchorizer` in document order
-/// so the generated ids match comrak's own `header_ids` output exactly —
-/// comrak dedupes repeated slugs with numeric suffixes across all headings, so
-/// skipping any (even h1/h4) would desync the numbering.
-fn collect_toc<'a>(root: &'a AstNode<'a>) -> Vec<TocEntry> {
-    let mut anchorizer = Anchorizer::new();
-    let mut toc = Vec::new();
+/// Characters an explicit `{#id}` may use. A subset of what MkDocs attr_list
+/// accepts, chosen so the id needs no escaping in an HTML attribute or a url
+/// fragment; a block with any other character is not an id block and stays
+/// literal heading text.
+fn is_id_char(c: char) -> bool {
+    c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.' | ':')
+}
+
+/// Split a trailing MkDocs attr_list id block — `{#id}`, `{ #id }`, `{: #id }`
+/// — off heading text. Returns the byte length of the text that remains
+/// (trailing whitespace before the block excluded) and the id.
+fn split_explicit_id(text: &str) -> Option<(usize, &str)> {
+    let inner = text.trim_end().strip_suffix('}')?;
+    let open = inner.rfind('{')?;
+    let body = inner[open + 1..].trim();
+    let body = body.strip_prefix(':').map_or(body, str::trim_start);
+    let id = body.strip_prefix('#')?;
+    if id.is_empty() || !id.chars().all(is_id_char) {
+        return None;
+    }
+    Some((text[..open].trim_end().len(), id))
+}
+
+/// Strip each heading's trailing `{#id}` block from its text, returning the
+/// explicit id per heading in document order (`None` where it has none). The
+/// block is matched across the heading's trailing run of text nodes, since
+/// comrak may split one run of literal text into several.
+fn take_explicit_ids<'a>(root: &'a AstNode<'a>) -> Vec<Option<String>> {
+    let mut ids = Vec::new();
+    for node in root.descendants() {
+        if !matches!(node.data.borrow().value, NodeValue::Heading(_)) {
+            continue;
+        }
+        let mut tail: Vec<&AstNode> = Vec::new();
+        let mut child = node.last_child();
+        while let Some(c) = child {
+            if !matches!(c.data.borrow().value, NodeValue::Text(_)) {
+                break;
+            }
+            tail.push(c);
+            child = c.previous_sibling();
+        }
+        tail.reverse();
+        let joined: String = tail
+            .iter()
+            .map(|c| match &c.data.borrow().value {
+                NodeValue::Text(t) => t.clone(),
+                _ => String::new(),
+            })
+            .collect();
+        let Some((keep, id)) = split_explicit_id(&joined) else {
+            ids.push(None);
+            continue;
+        };
+        ids.push(Some(id.to_string()));
+        // Truncate the text run to its first `keep` bytes, dropping emptied nodes.
+        let mut offset = 0;
+        for c in tail {
+            let mut data = c.data.borrow_mut();
+            let NodeValue::Text(ref mut t) = data.value else {
+                continue;
+            };
+            let end = offset + t.len();
+            if end <= keep {
+                offset = end;
+                continue;
+            }
+            if offset >= keep {
+                drop(data);
+                c.detach();
+            } else {
+                t.truncate(keep - offset);
+                offset = keep;
+            }
+        }
+    }
+    ids
+}
+
+/// Give every heading its id, in document order. An explicit `{#id}` is used
+/// verbatim — a duplicate explicit id is emitted as written, as MkDocs does.
+/// Auto ids are comrak's slug of the heading text, deduplicated with comrak's
+/// `-1`, `-2` suffixing against every id already taken, explicit ones
+/// included (all explicit ids are reserved up front, so an auto id never
+/// claims one that appears later on the page). With no explicit ids this is
+/// exactly comrak's own `header_ids` assignment.
+fn assign_heading_ids<'a>(root: &'a AstNode<'a>, explicit: Vec<Option<String>>) -> Vec<TocEntry> {
+    let mut used: HashSet<String> = explicit.iter().flatten().cloned().collect();
+    let mut explicit = explicit.into_iter();
+    let mut out = Vec::new();
     for node in root.descendants() {
         let level = match &node.data.borrow().value {
             NodeValue::Heading(h) => h.level,
             _ => continue,
         };
-        let text = text_of(node);
-        let id = anchorizer.anchorize(text.clone());
-        if level == 2 || level == 3 {
-            toc.push(TocEntry { level, id, text });
+        let id = match explicit.next().flatten() {
+            Some(id) => id,
+            None => {
+                let slug = Anchorizer::new().anchorize(heading_slug_text(node));
+                let mut id = slug.clone();
+                let mut n = 0;
+                while used.contains(&id) {
+                    n += 1;
+                    id = format!("{slug}-{n}");
+                }
+                used.insert(id.clone());
+                id
+            }
+        };
+        out.push(TocEntry {
+            level,
+            id,
+            text: text_of(node),
+        });
+    }
+    out
+}
+
+/// The text comrak anchorizes for a heading (its `collect_text`): literal and
+/// code text, with line breaks as spaces.
+fn heading_slug_text<'a>(node: &'a AstNode<'a>) -> String {
+    let mut s = String::new();
+    for d in node.descendants() {
+        match &d.data.borrow().value {
+            NodeValue::Text(t) => s.push_str(t),
+            NodeValue::Code(code) => s.push_str(&code.literal),
+            NodeValue::LineBreak | NodeValue::SoftBreak => s.push(' '),
+            _ => {}
         }
     }
-    toc
+    s
+}
+
+/// Emits each heading's open tag and anchor with the id `assign_heading_ids`
+/// gave it, byte-for-byte in comrak's own `header_ids` shape. comrak calls
+/// `enter` once per heading in document order — the order the ids were
+/// assigned in — so the ids are handed out from a queue.
+struct HeadingIds(Mutex<std::vec::IntoIter<String>>);
+
+impl HeadingIds {
+    fn new(ids: Vec<String>) -> HeadingIds {
+        HeadingIds(Mutex::new(ids.into_iter()))
+    }
+}
+
+impl HeadingAdapter for HeadingIds {
+    fn enter(
+        &self,
+        output: &mut dyn Write,
+        heading: &HeadingMeta,
+        sourcepos: Option<Sourcepos>,
+    ) -> io::Result<()> {
+        write!(output, "<h{}", heading.level)?;
+        if let Some(sp) = sourcepos.filter(|sp| sp.start.line > 0) {
+            write!(output, " data-sourcepos=\"{sp}\"")?;
+        }
+        let id = self
+            .0
+            .lock()
+            .ok()
+            .and_then(|mut ids| ids.next())
+            .unwrap_or_default();
+        write!(
+            output,
+            "><a href=\"#{id}\" aria-hidden=\"true\" class=\"anchor\" id=\"{id}\"></a>"
+        )
+    }
+
+    fn exit(&self, output: &mut dyn Write, heading: &HeadingMeta) -> io::Result<()> {
+        writeln!(output, "</h{}>", heading.level)
+    }
 }
 
 fn text_of<'a>(node: &'a AstNode<'a>) -> String {
@@ -742,8 +908,8 @@ mod tests {
     #[test]
     fn toc_dedup_numbering_tracks_comrak() {
         // Two identical headings: comrak suffixes the second id (`-1`). The TOC
-        // must use the same suffixing, which requires anchorizing every heading in
-        // document order through one shared Anchorizer.
+        // must use the same suffixing, which requires deduplicating every heading
+        // in document order against one shared set of taken ids.
         let r = render_markdown(
             "## Dup\n\n## Dup\n\ntext",
             Path::new(""),
@@ -770,6 +936,175 @@ mod tests {
         )
         .unwrap();
         assert!(r.toc.is_empty());
+    }
+
+    fn render(md: &str) -> Rendered {
+        render_markdown(
+            md,
+            Path::new(""),
+            &HashSet::new(),
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .unwrap()
+    }
+
+    /// comrak's own rendering of `md` with its built-in `header_ids` — the
+    /// reference output the heading adapter must reproduce byte-for-byte.
+    fn comrak_reference(md: &str, sourcepos: bool) -> String {
+        let arena = Arena::new();
+        let mut options = comrak_options();
+        options.render.sourcepos = sourcepos;
+        let root = parse_document(&arena, md, &options);
+        let adapter = SyntectAdapter::new(Some("InspiredGitHub"));
+        let mut plugins = Plugins::default();
+        plugins.render.codefence_syntax_highlighter = Some(&adapter);
+        let mut out = Vec::new();
+        format_html_with_plugins(root, &options, &mut out, &plugins).unwrap();
+        String::from_utf8(out).unwrap()
+    }
+
+    /// Headings with no `{#id}`: every auto-id shape (duplicates, inline marks,
+    /// code, unicode, punctuation, setext, every level, a `{` that is not an id
+    /// block) renders exactly as comrak's own `header_ids` does, in build and
+    /// edit (`sourcepos`) mode alike.
+    #[test]
+    fn auto_id_output_is_byte_identical_to_comrak() {
+        let md = "# Title\n\n## Dup\n\n## Dup\n\n### `code` and *em* **bold**\n\n\
+                  #### Ünïcödé — dash's \"quotes\"\n\n##### Set {a, b}\n\n###### Brace {.class}\n\n\
+                  Setext one\n==========\n\nSetext two\n----------\n\n## Dup-1\n\n## \n\ntext\n";
+        assert_eq!(render(md).html, comrak_reference(md, false));
+        let (editable, _) = render_markdown_editable(
+            md,
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .unwrap();
+        assert_eq!(editable.html, comrak_reference(md, true));
+    }
+
+    #[test]
+    fn explicit_id_is_stripped_and_becomes_the_heading_id() {
+        let r = render("### The operating set — three lines {#operating-set}\n\ntext");
+        assert!(
+            r.html.contains(r##"<h3><a href="#operating-set" aria-hidden="true" class="anchor" id="operating-set"></a>The operating set — three lines</h3>"##),
+            "got: {}",
+            r.html
+        );
+        assert!(!r.html.contains("{#"));
+        assert_eq!(
+            r.toc,
+            vec![TocEntry {
+                level: 3,
+                id: "operating-set".into(),
+                text: "The operating set — three lines".into(),
+            }]
+        );
+    }
+
+    #[test]
+    fn explicit_id_accepts_attr_list_spacing_and_colon_forms() {
+        let r = render(
+            "## A {#a}\n\n## B   { #b }\n\n## C {: #c }\n\n## D {:#d}\n\n## E{#e}\n\n\
+             ## F *em* {#f} ##\n\n## G_x {#g_x.y:z}\n",
+        );
+        let got: Vec<(&str, &str)> = r
+            .toc
+            .iter()
+            .map(|t| (t.id.as_str(), t.text.as_str()))
+            .collect();
+        assert_eq!(
+            got,
+            vec![
+                ("a", "A"),
+                ("b", "B"),
+                ("c", "C"),
+                ("d", "D"),
+                ("e", "E"),
+                ("f", "F em"),
+                ("g_x.y:z", "G_x"),
+            ]
+        );
+        assert!(!r.html.contains('{'), "got: {}", r.html);
+    }
+
+    #[test]
+    fn non_id_brace_blocks_stay_literal_with_auto_ids() {
+        let r = render(
+            "## Set {a, b}\n\n## Class {.wide}\n\n## Spaced {#two words}\n\n\
+             ## Mid {#x} tail\n\n## Empty {#}\n\n## Quote {#a\"b}\n",
+        );
+        let ids: Vec<&str> = r.toc.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(
+            ids,
+            vec![
+                "set-a-b",
+                "class-wide",
+                "spaced-two-words",
+                "mid-x-tail",
+                "empty-",
+                "quote-ab",
+            ]
+        );
+        assert!(r.html.contains("Spaced {#two words}"));
+    }
+
+    #[test]
+    fn explicit_ids_are_reserved_before_auto_ids_are_assigned() {
+        // The auto id `alpha` would collide with the explicit `{#alpha}` that
+        // appears later on the page, so the auto heading takes `alpha-1`.
+        let r = render("## Alpha\n\n## Beta {#alpha}\n\n## Alpha\n");
+        let ids: Vec<&str> = r.toc.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["alpha-1", "alpha", "alpha-2"]);
+    }
+
+    #[test]
+    fn duplicate_explicit_ids_are_emitted_as_written() {
+        let r = render("## One {#same}\n\n## Two {#same}\n");
+        let ids: Vec<&str> = r.toc.iter().map(|t| t.id.as_str()).collect();
+        assert_eq!(ids, vec!["same", "same"]);
+        assert_eq!(r.html.matches(r#"id="same""#).count(), 2);
+    }
+
+    #[test]
+    fn first_h1_and_title_exclude_the_explicit_id() {
+        assert_eq!(first_h1("# Insurance {#top}\n"), Some("Insurance".into()));
+        assert_eq!(
+            render("# Insurance {#top}\n").first_h1,
+            Some("Insurance".into())
+        );
+    }
+
+    #[test]
+    fn explicit_id_in_edit_mode_keeps_the_sourcepos_attribute() {
+        let (r, _) = render_markdown_editable(
+            "## Heading {#h}\n",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .unwrap();
+        assert!(
+            r.html.starts_with(r##"<h2 data-sourcepos="1:1-1:15"><a href="#h" aria-hidden="true" class="anchor" id="h"></a>Heading</h2>"##),
+            "got: {}",
+            r.html
+        );
+    }
+
+    #[test]
+    fn toc_id_of_a_wikilink_heading_matches_its_rendered_anchor() {
+        // The TOC is derived from the rendered heading (wikilink resolved to its
+        // target's title), so its href lands on the anchor actually emitted.
+        let r = render("## See [[getting-started]]\n");
+        assert_eq!(r.toc[0].text, "See Getting Started");
+        assert_eq!(r.toc[0].id, "see-getting-started");
+        assert!(r.html.contains(r#"id="see-getting-started""#));
     }
 
     #[test]
