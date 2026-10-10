@@ -349,7 +349,8 @@ fn edit_is_same_origin(req: &Request) -> bool {
 /// filesystem path, only ask "write to the url you already mapped."
 ///
 /// The write is atomic: the new content lands in a temp sibling
-/// (`<path>.md.tmp-<pid>`) first, then an atomic rename replaces the target.
+/// (`<path>.md.tmp-<pid>`, beside the symlink-resolved file) first, then an
+/// atomic rename replaces the target.
 /// A failure between those two steps (full disk, permissions) leaves the
 /// last-good file on disk untouched and may leave the temp file behind —
 /// harmless scratch, never a partially-written page — and is logged rather
@@ -392,9 +393,18 @@ fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
         }
     };
 
+    // Write through a symlink, not over it: renaming onto the link itself would
+    // replace it with a regular file (splitting a `CLAUDE.md -> AGENTS.md`
+    // pair). The temp file sits beside the real file so the rename stays on
+    // one filesystem, and takes the original's permissions.
+    let path = std::fs::canonicalize(&path).unwrap_or(path);
     let tmp_path = path.with_extension(format!("md.tmp-{}", std::process::id()));
-    let result =
-        std::fs::write(&tmp_path, &edit.source).and_then(|()| std::fs::rename(&tmp_path, &path));
+    let result = std::fs::write(&tmp_path, &edit.source)
+        .and_then(|()| match std::fs::metadata(&path) {
+            Ok(meta) => std::fs::set_permissions(&tmp_path, meta.permissions()),
+            Err(_) => Ok(()),
+        })
+        .and_then(|()| std::fs::rename(&tmp_path, &path));
     match result {
         Ok(()) => respond_text(req, 200, "ok"),
         Err(e) => {
@@ -1985,5 +1995,61 @@ mod tests {
         assert!(!host_header_is_loopback("localhost.evil.example"));
         assert!(!host_header_is_loopback("0.0.0.0:8000"));
         assert!(!host_header_is_loopback(""));
+    }
+    #[cfg(unix)]
+    #[test]
+    fn edit_through_a_symlink_updates_the_target_and_keeps_the_link() {
+        // `CLAUDE.md -> AGENTS.md` is the common one-file-two-names setup: dedup
+        // hides AGENTS and the CLAUDE page is the editable one. Renaming a temp
+        // file over the *link* would replace it with a regular file and leave
+        // AGENTS.md stale, splitting what the author kept as one.
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = std::env::temp_dir().join(format!("comp-editep-symlink-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        let agents = tmp.join("AGENTS.md");
+        std::fs::write(&agents, "# A\n\nold\n").unwrap();
+        std::fs::set_permissions(&agents, std::fs::Permissions::from_mode(0o640)).unwrap();
+        let claude = tmp.join("CLAUDE.md");
+        std::os::unix::fs::symlink("AGENTS.md", &claude).unwrap();
+
+        let mut editable = HashMap::new();
+        editable.insert("CLAUDE.html".to_string(), claude.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let d = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, d));
+
+        let ok = post(
+            addr,
+            "/__edit",
+            r##"{"url":"CLAUDE.html","source":"# A\n\nnew\n"}"##,
+        );
+        assert!(ok.contains("200 OK"), "resp: {ok}");
+        assert!(
+            std::fs::symlink_metadata(&claude)
+                .unwrap()
+                .file_type()
+                .is_symlink(),
+            "the symlink must survive the edit"
+        );
+        assert_eq!(std::fs::read_to_string(&agents).unwrap(), "# A\n\nnew\n");
+        assert_eq!(
+            std::fs::metadata(&agents).unwrap().permissions().mode() & 0o777,
+            0o640,
+            "the edited file keeps its permissions"
+        );
+
+        std::fs::remove_dir_all(&tmp).ok();
     }
 }
