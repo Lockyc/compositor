@@ -581,9 +581,10 @@ fn rebuild_into(state: &RwLock<ServedSite>, cfg: &SiteConfig, docs: &Path, proje
     }
 }
 
-/// Watch `docs` and rebuild on change. A burst of editor saves is debounced
-/// into a single rebuild by draining the event channel over a ~200ms quiet
-/// window before rebuilding.
+/// Watch `docs` (and, when it is a subdir, the project dir's own entries) and
+/// rebuild on change. A burst of editor saves is debounced into a single
+/// rebuild by draining the event channel over a ~200ms quiet window before
+/// rebuilding.
 ///
 /// **The caller owns the returned watcher and must keep it alive** — dropping it drops the
 /// notify sender, which ends the rebuild thread. That is the only shutdown path: ownership
@@ -609,12 +610,22 @@ fn spawn_watcher(
                 return None;
             }
         };
-    if let Err(e) = watcher.watch(&docs, RecursiveMode::Recursive) {
-        eprintln!(
-            "watching {} failed, live-reload disabled: {e}",
-            docs.display()
-        );
-        return None;
+    // A `docs/` subdir leaves the repo-root README/CLAUDE/AGENTS pages (which
+    // `/__edit` writes) and the root `.gitignore` outside the docs watch; the
+    // project dir's own entries cover them. Non-recursive, so `target/`,
+    // `.git/` and the rest of the repo stay unwatched.
+    let mut watches = vec![(docs.as_path(), RecursiveMode::Recursive)];
+    if docs != project_dir {
+        watches.push((project_dir.as_path(), RecursiveMode::NonRecursive));
+    }
+    for (path, mode) in watches {
+        if let Err(e) = watcher.watch(path, mode) {
+            eprintln!(
+                "watching {} failed, live-reload disabled: {e}",
+                path.display()
+            );
+            return None;
+        }
     }
     let thread = std::thread::spawn(move || {
         loop {
@@ -2050,6 +2061,46 @@ mod tests {
             "the edited file keeps its permissions"
         );
 
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+    #[test]
+    fn edit_to_a_repo_root_readme_rebuilds_the_served_page() {
+        // The repo-root README (served at `/`) lives outside a `docs/` subdir.
+        // Unless its own edit triggers a rebuild, the served page and its
+        // `#__editsrc` payload stay pre-edit, and the next block edit
+        // reconstructs from that stale source — silently reverting this one.
+        let tmp = std::env::temp_dir().join(format!("comp-root-rebuild-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/guide.md"), "# Guide\n").unwrap();
+        std::fs::write(tmp.join("README.md"), "# R\n\nbefore\n").unwrap();
+
+        let h = serve_handle(&tmp).expect("serve_handle binds");
+        let addr = std::net::SocketAddr::from(([127, 0, 0, 1], h.port));
+        assert!(get(addr, "/").contains("before"));
+
+        let ok = post_with_headers(
+            addr,
+            "/__edit",
+            r##"{"url":"index.html","source":"# R\n\nafter\n"}"##,
+            &[("Sec-Fetch-Site", "same-origin")],
+        );
+        assert!(ok.contains("200 OK"), "resp: {ok}");
+
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        let home = loop {
+            let home = get(addr, "/");
+            if home.contains("after") || std::time::Instant::now() >= deadline {
+                break home;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(50));
+        };
+        assert!(home.contains("after"), "served page must rebuild: {home}");
+        let reload = get(addr, "/__reload");
+        let epoch = reload.rsplit("\r\n\r\n").next().unwrap_or("");
+        assert_ne!(epoch.trim(), "0", "the edit must bump the epoch: {reload}");
+
+        h.shutdown();
         std::fs::remove_dir_all(&tmp).ok();
     }
 }

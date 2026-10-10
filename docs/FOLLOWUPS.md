@@ -12,28 +12,27 @@ Not bugs that block use — conscious deferrals.
 
 ## `serve`
 
-- **`compositor.toml` changes are not watched.** The `serve` watcher watches
-  only the docs dir and captures the loaded config by value, so edits to
-  `compositor.toml` (e.g. `site_name`) take effect only on restart. Fine for
-  content editing; revisit if config becomes something you tune live.
+- **`compositor.toml` changes take effect only on restart.** The `serve` watcher
+  captures the loaded config by value, so an edit (e.g. `site_name`) triggers a
+  rebuild that still uses the startup config. Fine for content editing; revisit
+  if config becomes something you tune live.
 
-- **`.gitignore` changes are not watched.** The watcher watches only the docs dir,
-  but the repo-root `.gitignore` sits outside it whenever `docs_dir` is a subdir.
-  So editing `.gitignore` does not itself trigger a rebuild; the new rules land on
-  the next rebuild from any docs edit, or on restart. The `Excluder` *is* rebuilt
+- **A `.gitignore` outside the watched paths does not trigger a rebuild.** The
+  watcher covers the docs tree plus the project dir's own entries, so the usual
+  repo-root `.gitignore` does; one in a directory between the project dir and a
+  nested `docs_dir`, or in a repo root above the project dir, does not — its
+  rules land on the next rebuild, or on restart. The `Excluder` *is* rebuilt
   every cycle (see `rebuild_into`), so this is staleness of the *trigger*, not of
-  the rules. Revisit by watching the collected `.gitignore` paths alongside the
-  docs dir.
+  the rules. Revisit by watching the collected `.gitignore` paths.
 
-- **A repo-root image added after startup 404s until an unrelated docs edit
-  triggers a rebuild.** The watcher watches only the docs dir, but a repo-root
-  README/CLAUDE page's image can sit outside it (see `root_assets::RootAssets`).
-  `serve`'s lenient policy renders a not-yet-existing one as an honest 404 at
-  the moment it's referenced, and nothing outside the docs dir triggers the
-  rebuild that would pick it up once the file lands — same family as the
-  `compositor.toml` and `.gitignore` entries above. Correct-by-design (honest
-  404, not a stale freeze; the next docs-triggered rebuild resolves it), not a
-  bug. Revisit alongside those two if repo-root assets ever need their own watch.
+- **A repo-root image added after startup under a subdirectory 404s until
+  another edit triggers a rebuild.** The project-dir watch is non-recursive, so
+  a README/CLAUDE page's image in, say, `images/` (see `root_assets::RootAssets`)
+  lands unseen. `serve`'s lenient policy renders a not-yet-existing one as an
+  honest 404, and the next rebuild resolves it. Correct-by-design (honest 404,
+  not a stale freeze), not a bug. Revisit alongside the `.gitignore` entry if
+  repo-root assets ever need their own watch.
+
 
 - **A panic while handling a request kills that server, silently.** No reachable panic path from
   external input exists today (the lock's critical sections are panic-free, so it can't poison; the
