@@ -35,8 +35,9 @@ that persists, a collapsible tree-nav whose sections are `<details>` — the
 active page's ancestor sections auto-open and the nav centres on the active
 item on load — a per-page TOC with
 scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
-MkDocs-style `!!!` admonitions and `???` collapsibles; `[[wikilinks]]` resolved
-by title, filename, alias, or path; frontmatter `title`/`aliases`; `.md`→`.html`
+MkDocs-style `!!!` admonitions and `???` collapsibles; MkDocs-style explicit heading
+ids (`## Heading {#id}`); `[[wikilinks]]` resolved by title, filename, alias, or path
+(`[[Page#id]]` deep-links to a heading); frontmatter `title`/`aliases`; `.md`→`.html`
 link rewriting; and non-Markdown assets copied through verbatim. Images resolve
 against the page that references them — including a repo-root `README.md`,
 `CLAUDE.md`, or `AGENTS.md` surfaced into the site, whose images resolve against
@@ -105,7 +106,8 @@ nothing. Repo `.gitignore` files only: the global `~/.config/git/ignore` and
 repo differently on different machines. `exclude` is the separate, tracked-tree
 case — a list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a
 directory you keep in git but don't publish. Both apply. The rendered site lands
-in `out_dir`.
+in `out_dir`, which may not be, or contain, the project or docs dir; nothing under
+`.git` is ever published or served.
 
 By default `build` is strict: an unresolvable internal link — or an image whose
 file isn't there — fails the build. Pass `--lenient` to publish anyway, rendering
