@@ -126,12 +126,13 @@ Not bugs that block use — conscious deferrals.
   `/__edit` only writes a url already in the `editable` map; adding, moving, or removing a
   page is out of scope for v1.
 
-- **No JS test harness.** `editor.js`'s serializer and reconstruction have no unit tests
-  (the repo is otherwise pure Rust). Correctness is held by the Rust `/__edit` endpoint
-  tests, a standalone Node byte-preservation harness run during development, and an
-  end-to-end headless-browser pass (edit a block on a page carrying an admonition + code +
-  frontmatter + task list, then `diff` the file to prove only the edited lines changed).
-  Add a committed Node smoke harness if the serializer grows.
+- **The JS harness covers the pure serializer helpers only.** `crates/compositor/tests/editor.test.cjs`
+  (Node, no DOM) exercises what `editor.js` exports under Node — inline and heading
+  serialization. Reconstruction (range-replacement over the live `#doc`) needs a DOM and
+  stays covered by the Rust `/__edit` endpoint tests plus an end-to-end headless-browser
+  pass (edit a block on a page carrying an admonition + code + frontmatter + task list,
+  then `diff` the file to prove only the edited lines changed). Export more helpers into
+  the harness as they become pure.
 
 - **`/__edit` does not drain an oversized body on a kept-alive connection.** The handler
   caps the body it buffers (`MAX_EDIT_BODY`) and rejects an over-cap request `400`, but on

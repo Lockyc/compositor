@@ -16,6 +16,17 @@
 (function () {
   "use strict";
 
+  // Under Node (the `tests/editor.test.cjs` harness) there is no DOM: hand the
+  // pure serializer helpers to the test and stop. A browser has no `module`.
+  if (typeof module === "object" && module && module.exports) {
+    module.exports = {
+      serializeInline: serializeInline,
+      serializeHeading: serializeHeading,
+      explicitIdSuffix: explicitIdSuffix,
+    };
+    return;
+  }
+
   var payloadEl = document.getElementById("__editsrc");
   if (!payloadEl) return;
 
@@ -191,6 +202,11 @@
     var nodes = el.childNodes;
     for (var i = 0; i < nodes.length; i++) {
       var n = nodes[i];
+      if (isHeadingAnchor(n)) {
+        // comrak's empty `<a class="anchor">` permalink inside a heading is
+        // rendering chrome, not content -- it has no Markdown source.
+        continue;
+      }
       if (n.nodeType === 3) {
         // text node
         out += n.nodeValue;
@@ -231,14 +247,63 @@
     return out;
   }
 
+  function isHeadingAnchor(n) {
+    return (
+      n.nodeType === 1 &&
+      n.tagName === "A" &&
+      n.getAttribute("aria-hidden") === "true" &&
+      (n.getAttribute("class") || "").split(/\s+/).indexOf("anchor") !== -1 &&
+      n.childNodes.length === 0
+    );
+  }
+
+  // The heading's explicit-id block (`{#id}`, `{ #id }`, `{: #id }`) exactly as
+  // written at the end of its original Markdown source, with the whitespace
+  // before it, or "" when it has none. The id is rendering-invisible, so it can
+  // only be carried over from the source; render-core's `split_explicit_id`
+  // decides what counts as one, and this accepts the same shapes.
+  function explicitIdSuffix(sourceText) {
+    var lines = (sourceText || "").split("\n");
+    // A setext heading's underline closes it; the id sits on the text above.
+    if (lines.length > 1 && /^\s*(=+|-+)\s*$/.test(lines[lines.length - 1])) {
+      lines.pop();
+    }
+    var text = lines.join("\n").replace(/\s+#+\s*$/, ""); // ATX closing run
+    var m = /(\s*\{:?\s*#[A-Za-z0-9_.:-]+\s*\})\s*$/.exec(text);
+    return m ? m[1] : "";
+  }
+
+  // Serialize a heading as ATX, carrying over its original `{#id}` suffix
+  // (`originalSource` is the heading's source text, "" for a new heading).
+  function serializeHeading(el, originalSource) {
+    var level = parseInt(el.tagName.charAt(1), 10);
+    return (
+      new Array(level + 1).join("#") +
+      " " +
+      serializeInline(el) +
+      explicitIdSuffix(originalSource)
+    );
+  }
+
+  // The original source text of a block, from its own data-sourcepos (which a
+  // block nested inside a blockquote has too), or "" when it can't be mapped.
+  function blockSourceText(el) {
+    var r = toFileLines(parseSourcepos(el), lineMap, fmLines);
+    return r ? rangeSourceText(r.a + "-" + r.b) : "";
+  }
+
   // Serialize one #doc child block to its Markdown source. `null` means "no
   // representation" (an unknown/unsupported block) -- the caller drops it.
   function serializeBlock(el) {
     var tag = el.tagName;
     if (tag === "P") return serializeInline(el);
     if (/^H[1-6]$/.test(tag)) {
-      var level = parseInt(tag.charAt(1), 10);
-      return new Array(level + 1).join("#") + " " + serializeInline(el);
+      // A heading split in two by Enter clones its data-sourcepos onto the
+      // second half; only the first half carries the original's `{#id}`.
+      var prev = el.previousElementSibling;
+      var split =
+        prev && prev.getAttribute("data-sourcepos") === el.getAttribute("data-sourcepos");
+      return serializeHeading(el, split ? "" : blockSourceText(el));
     }
     if (tag === "UL") return serializeList(el, false);
     if (tag === "OL") return serializeList(el, true);

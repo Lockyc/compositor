@@ -17,10 +17,11 @@ build:
 run *args:
     cargo run -p compositor -- {{args}}
 
-# Run the test suite
+# Run the test suite (cargo + the Node editor.js harness)
 [group("check")]
 test:
     cargo test
+    node --test crates/compositor/tests/
 
 # Compile without producing binaries
 [group("check")]
@@ -45,6 +46,7 @@ gate:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
+    node --test crates/compositor/tests/
     echo "✓ gate passed"
 
 # Cut a release: bump the workspace version + write RELEASE_NOTES.md first, then run this

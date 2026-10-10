@@ -259,7 +259,8 @@ is loud and local. Do not add a pin here to "fix" that — this repo's pin gover
 - Heading anchors: comrak's `header_ids` slug, or an explicit MkDocs attr_list id —
   `## Heading {#some-id}` (also `{ #id }`, `{: #id }`; id chars `[A-Za-z0-9_.:-]`) is
   stripped from the heading text and becomes its id, in the HTML, TOC, title and
-  `[[Name#some-id]]` deep-links alike. Explicit ids are emitted as written (a
+  `[[Name#some-id]]` deep-links alike, and an inline edit of the heading keeps the
+  block as written. Explicit ids are emitted as written (a
   duplicate stays a duplicate) and are reserved before auto ids, which dedupe around
   them with `-1`, `-2`. Any other trailing `{…}` stays literal text. (See
   `markdown::assign_heading_ids`.)
@@ -363,7 +364,7 @@ release.yml -f tag=v<version>`.
   default (an unresolvable internal link fails the build); `--lenient` publishes
   anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
-- Pre-merge gate: `just gate` (fmt-check + clippy + tests)
+- Pre-merge gate: `just gate` (fmt-check + clippy + cargo tests + the Node `editor.js` harness, `crates/compositor/tests/editor.test.cjs`)
 
 ## Toolchain
 

@@ -29,3 +29,6 @@ jobs:
 
       - name: test
         run: cargo test --all
+
+      - name: editor.js harness
+        run: node --test crates/compositor/tests/
