@@ -30,12 +30,11 @@ pub struct EditSource {
     /// rendering (0 for a page with no frontmatter block).
     pub fm_lines: usize,
     /// The per-output-line map from `preprocess_admonitions_mapped` for the
-    /// body: `Some(source_line_idx)` for
-    /// a passthrough line, `None` for a line synthesized by the admonition
-    /// preprocessor. Faithful and unprocessed — a `None` region's line count
-    /// need not match its source span (see admonitions.rs), so any
-    /// position -> file-line conversion must go through this map per output
-    /// line rather than assuming a constant offset.
+    /// body: `Some(source_line_idx)` for a passthrough line, `None` for a line
+    /// synthesized by the admonition preprocessor. Faithful and unprocessed —
+    /// a `None` region's line count need not match its source span (see
+    /// admonitions.rs), so any position -> file-line conversion must go
+    /// through this map per output line rather than assuming a constant offset.
     pub line_map: Vec<Option<usize>>,
     /// The absolute on-disk file this page renders from — the exact path
     /// `/__edit` writes when the page is edited. Single-sources the write
