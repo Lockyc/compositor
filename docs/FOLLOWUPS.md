@@ -79,15 +79,15 @@ Not bugs that block use — conscious deferrals.
   predates it. `build`'s output is unaffected — a static host decodes the request
   normally; only `serve`'s own handler skips the step. Fix by percent-decoding the
   request path before it's used as a lookup key, mirroring `resolve_image`.
-  **Constraint on that fix:** `is_safe` (`serve.rs:106`) validates the raw
+  **Constraint on that fix:** `is_safe` (`serve.rs`) validates the raw
   request url, and the on-disk branch then joins that same raw url onto the
-  docs dir (`serve.rs:195`). Decoding the path *before* the safety check would
+  docs dir (the on-demand asset branch in `handle`). Decoding the path *before* the safety check would
   let `%2e%2e%2f` become a literal `..` that `is_safe` had already waved
   through as safe — a directory-traversal hole. Any decode-then-lookup change
   must re-run `is_safe` (or an equivalent check) against the *decoded* path,
   not just the raw one.
 
-- **`rewrite_link` (`render-core/src/markdown.rs:156`) never percent-decodes
+- **`rewrite_link` (`render-core/src/markdown.rs`) never percent-decodes
   and only ever splits `#`, never `?`.** A link to a real file with a space —
   `[link](my%20page.md)` pointing at `my page.md` — hard-fails a strict build
   as an unresolvable link, even though the file exists. Pre-existing (dates to
