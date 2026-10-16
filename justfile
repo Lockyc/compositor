@@ -21,7 +21,7 @@ run *args:
 [group("check")]
 test:
     cargo test
-    node --test crates/compositor/tests/
+    node --test 'crates/compositor/tests/*.test.cjs'
 
 # Compile without producing binaries
 [group("check")]
@@ -46,7 +46,7 @@ gate:
     cargo fmt --check
     cargo clippy --all-targets -- -D warnings
     cargo test
-    node --test crates/compositor/tests/
+    node --test 'crates/compositor/tests/*.test.cjs'
     echo "✓ gate passed"
 
 # Cut a release: bump the workspace version + write RELEASE_NOTES.md first, then run this
