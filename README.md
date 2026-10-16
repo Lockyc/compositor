@@ -1,10 +1,8 @@
 # compositor
 
 A Rust static-site generator for Markdown doc repos: point it at a directory of
-Markdown and get a themed, navigable static site. Built as a
-from-scratch replacement for MkDocs across a fleet of documentation sites, and as a
-reusable render engine (`render-core`) that lector — a Tauri desktop docs console —
-embeds.
+Markdown and get a themed, navigable static site. A drop-in replacement for MkDocs,
+with its render engine (`render-core`) also usable as a library.
 
 [![Release](https://img.shields.io/github/v/release/Lockyc/compositor?sort=semver&label=release)](https://github.com/Lockyc/compositor/releases/latest)
 [![CI](https://github.com/Lockyc/compositor/actions/workflows/ci.yml/badge.svg)](https://github.com/Lockyc/compositor/actions/workflows/ci.yml)
@@ -14,9 +12,8 @@ embeds.
 
 ## Status
 
-**In use, and still `0.x`.** compositor has replaced MkDocs on every site it was
-built for, and builds them all today. It stays `0.x` because the CLI and
-`compositor.toml` surface may still move; the rendering is the settled part.
+**In use, `0.x`.** The rendering is stable; the CLI and `compositor.toml` surface
+may still change.
 
 **Two commands.** `build` renders a docs tree to static HTML. `serve` is a
 live-reload dev server: it watches the tree, rebuilds in memory on change, and
@@ -27,42 +24,36 @@ in-place editor: click a paragraph, heading, list, table, or code block and edit
 as rendered — changes autosave to the source `.md` and live-reload swaps the result
 back in. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
 around them stay byte-for-byte. It's off on any non-loopback bind
-(`serve --host 0.0.0.0`) and never present in `build` output — the served site alone
-can write files, and only over the loopback.
+(`serve --host 0.0.0.0`) and never present in `build` output.
 
 **What you get, with no config:** a Pico.css shell (top bar, light/dark toggle
-that persists, a collapsible tree-nav whose sections are `<details>` — the
-active page's ancestor sections auto-open and the nav centres on the active
-item on load — a per-page TOC with
+that persists, a collapsible tree-nav that opens to and centres on the current
+page, a per-page TOC with
 scroll-spy, a prev/next pager, a footer); GFM with syntect-highlighted code;
 MkDocs-style `!!!` admonitions and `???` collapsibles; MkDocs-style explicit heading
 ids (`## Heading {#id}`); `[[wikilinks]]` resolved by title, filename, alias, or path
 (`[[Page#id]]` deep-links to a heading); frontmatter `title`/`aliases`; `.md`→`.html`
-link rewriting; and non-Markdown assets copied through verbatim. Images resolve
-against the page that references them — including a repo-root `README.md`,
-`CLAUDE.md`, or `AGENTS.md` surfaced into the site, whose images resolve against
-the repo root and are copied in on reference — for a Markdown `![](…)` and an
-author-written raw-HTML `<img src="…">` alike (the form READMEs use to set an
-image width). Raw HTML in your Markdown otherwise renders as-is, matching MkDocs —
-compositor assumes author-trusted content.
+link rewriting; and non-Markdown assets copied through verbatim. Image paths, in
+`![](…)` or raw `<img src="…">`, resolve against the page that references them; for
+a surfaced repo-root `README.md`, `CLAUDE.md` or `AGENTS.md`, against the repo root.
+Raw HTML renders as-is, as in MkDocs: build only content you trust.
 
 A repo-root `CLAUDE.md` and/or `AGENTS.md` (when the docs dir is a subdir) gets
 its own top-level nav entry alongside Home — both on by default. Set
 `surface_claude_md = false` and/or `surface_agents_md = false` in
 `compositor.toml` to hide either one. When both files are present and
 `AGENTS.md`'s content is identical to `CLAUDE.md`'s (a symlink or a copy), only
-the CLAUDE entry shows, so the nav never carries a duplicate. Under the
+the CLAUDE entry shows. Under the
 loopback editor these surfaced repo-root pages — Home (`README.md`),
 `CLAUDE.md`, and `AGENTS.md` — are themselves editable in place, the same as
 any page under the docs dir.
 
-**There is no site search**, deliberately — see [`CLAUDE.md`](CLAUDE.md).
+**There is no site search.**
 
 **As a library**, the `render-core` crate turns a Markdown tree into an in-memory
 site model, and compositor's `[lib]` target exposes `serve_handle`/`ServeHandle`
 — an embedding API that runs a site on a loopback port, for host apps supervising
-many sites in one process. lector, a Tauri desktop docs console, is the consumer
-it was built for.
+many sites in one process, such as [lector](https://github.com/Lockyc/lector).
 
 See [`CLAUDE.md`](CLAUDE.md) for the full render surface and the known
 divergences from MkDocs.
@@ -78,8 +69,7 @@ That works anywhere Rust does — compositor is developed on macOS and runs on L
 
 Each [release](https://github.com/Lockyc/compositor/releases/latest) also ships a
 prebuilt `x86_64-unknown-linux-gnu` binary and its `.sha256`: a single binary with
-no runtime dependencies, for dropping onto a Linux box that has no Rust toolchain
-(which is exactly what it's there for). Linux is the only prebuilt target —
+no runtime dependencies, for a Linux box with no Rust toolchain. Linux is the only prebuilt target —
 everywhere else, build from source with the two lines above.
 
 A `compositor.toml` is optional:
@@ -95,15 +85,13 @@ A `compositor.toml` is optional:
 
 Without one, defaults are synthesized: `site_name` from the folder name, and the
 docs are taken from `docs/` if that subdir exists, else the directory itself — so
-a bare folder of Markdown builds and serves with no config. (In a `compositor.toml`,
-an unknown key or a syntax/type error is a hard error, not a silent fallback.)
+a bare folder of Markdown builds and serves with no config. In a `compositor.toml`,
+an unknown key or a syntax/type error fails the run.
 
 Paths your repo's `.gitignore` ignores are skipped — in rendering, asset-copy, and
-`serve`'s on-demand asset serving. Untracked scratch isn't site content, so no
-config is needed to keep it out, and a directory that isn't a git repo ignores
-nothing. Repo `.gitignore` files only: the global `~/.config/git/ignore` and
-`.git/info/exclude` are machine-local, and honoring them would render the same
-repo differently on different machines. `exclude` is the separate, tracked-tree
+`serve`'s on-demand asset serving. Only the repo's own `.gitignore` files count (not
+the global `~/.config/git/ignore` or `.git/info/exclude`), and outside a git repo
+nothing is skipped. `exclude` is the separate, tracked-tree
 case — a list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a
 directory you keep in git but don't publish. Both apply. The rendered site lands
 in `out_dir`, which may not be, or contain, the project or docs dir; nothing under
@@ -111,8 +99,7 @@ in `out_dir`, which may not be, or contain, the project or docs dir; nothing und
 
 By default `build` is strict: an unresolvable internal link — or an image whose
 file isn't there — fails the build. Pass `--lenient` to publish anyway, rendering
-either as an honest 404, for unattended pipelines that must never miss an update
-over one bad link. `serve` is always lenient, for the same reason.
+either as a 404. `serve` is always lenient.
 
 For local editing, `serve` watches the docs tree and live-reloads the browser on
 every change:
