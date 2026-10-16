@@ -1,5 +1,5 @@
 // Node smoke harness for editor.js's pure serializer helpers: `node --test
-// crates/compositor/tests/` (part of `just test` / `just gate`). Elements are
+// 'crates/compositor/tests/*.test.cjs'` (part of `just test` / `just gate`). Elements are
 // minimal stand-ins exposing only the DOM surface the serializer reads.
 "use strict";
 
