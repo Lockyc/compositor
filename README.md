@@ -34,12 +34,12 @@ MkDocs-style `!!!` admonitions and `???` collapsibles; MkDocs-style explicit hea
 ids (`## Heading {#id}`); `[[wikilinks]]` resolved by title, filename, alias, or path
 (`[[Page#id]]` deep-links to a heading); frontmatter `title`/`aliases`; `.md`→`.html`
 link rewriting; and non-Markdown assets copied through verbatim. Image paths, in
-`![](…)` or raw `<img src="…">`, resolve against the page that references them; for
-a surfaced repo-root `README.md`, `CLAUDE.md` or `AGENTS.md`, against the repo root.
+`![](…)` or raw `<img src="…">`, resolve against the page that references them; in
+the repo-root `README.md`, `CLAUDE.md` and `AGENTS.md` pages (below), against the repo root.
 Raw HTML renders as-is, as in MkDocs: build only content you trust.
 
 A repo-root `CLAUDE.md` and/or `AGENTS.md` (when the docs dir is a subdir) gets
-its own top-level nav entry alongside Home — both on by default. Set
+its own top-level nav entry alongside Home (the repo-root `README.md`), both on by default. Set
 `surface_claude_md = false` and/or `surface_agents_md = false` in
 `compositor.toml` to hide either one. When both files are present and
 `AGENTS.md`'s content is identical to `CLAUDE.md`'s (a symlink or a copy), only
@@ -76,7 +76,7 @@ A `compositor.toml` is optional:
 
 | Key | Default | What it does |
 |---|---|---|
-| `site_name` | *required* in a file | Site title in the top bar and `<title>` |
+| `site_name` | *required* when the file exists | Site title in the top bar and `<title>` |
 | `docs_dir` | `docs` | Docs tree to render, relative to `--dir` |
 | `out_dir` | `site` | Where `build` writes the rendered site |
 | `exclude` | `[]` | Docs-dir-relative path prefixes to skip (below) |
@@ -91,10 +91,10 @@ an unknown key or a syntax/type error fails the run.
 Paths your repo's `.gitignore` ignores are skipped — in rendering, asset-copy, and
 `serve`'s on-demand asset serving. Only the repo's own `.gitignore` files count (not
 the global `~/.config/git/ignore` or `.git/info/exclude`), and outside a git repo
-nothing is skipped. `exclude` is the separate, tracked-tree
-case — a list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a
-directory you keep in git but don't publish. Both apply. The rendered site lands
-in `out_dir`, which may not be, or contain, the project or docs dir; nothing under
+nothing is skipped. `exclude` covers files git does track: a
+list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a directory
+you keep in git but don't publish. Both apply. The rendered site lands in
+`out_dir`, which must not be, or contain, the project or docs dir; nothing under
 `.git` is ever published or served.
 
 By default `build` is strict: an unresolvable internal link — or an image whose
