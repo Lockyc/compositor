@@ -240,7 +240,7 @@ lector (`github.com/lockyc/lector`) is the first consumer: one `ServeHandle` per
 compositor now has a **second build toolchain** — its own `rust-toolchain.toml` standalone, and
 lector's pin when consumed as a git dep (rustup resolves from the dir `cargo` runs in, never from
 `~/.cargo/git/checkouts/`). The two can diverge; lector's build is the drift detector, and the failure
-is loud and local. Do not add a pin here to "fix" that — this repo's pin governs its own gate and CI.
+is loud and local. Do not add a pin here to "fix" that — this repo's pin governs its own gate and release build.
 
 ## Render surface (exhaustive)
 
@@ -303,7 +303,7 @@ existing tag *before* touching anything public; then runs the gate, pushes `dev`
 fast-forwards `main`, tags, creates the release with your notes, and waits for the Linux
 binary to land.
 
-**Never `gh release create` by hand, and never let CI create the release.** Two creators
+**Never `gh release create` by hand, and never let a workflow create the release.** Two creators
 race, and the loser publishes nothing. `release.yml` used to create it on tag push, so a
 manual create won the race and left a release carrying **zero assets** — which reads
 exactly like success. `just release` is the only creator; `release.yml` only *uploads*.
@@ -322,8 +322,8 @@ stale doc here.
 **A release publishes a Linux binary, and the consuming host's updater depends on it.**
 [`release.yml`](.github/workflows/release.yml) builds `x86_64-unknown-linux-gnu` with the
 pinned toolchain and uploads it plus a `.sha256` onto the release `just release` already
-created — triggered by `release: published`, never by the tag. It runs in CI for exactly
-one reason: a Mac cannot build that target without cross tooling. The consuming host
+created — triggered by `release: published`, never by the tag. It runs on GitHub Actions for
+exactly one reason: a Mac cannot build that target without cross tooling. The consuming host
 fetches the asset **unauthenticated** (the reason this repo is public) and pushes it to
 the build hosts, so a release whose asset never arrives silently strands every consuming
 docs site on the old binary. `just release` blocks until both assets appear and fails
@@ -347,7 +347,7 @@ that consumer.
 
 **Footgun — Actions can go silently deaf to events.** After this repo was deleted and
 re-created, `push` and tag events created **no workflow run at all** (`actions/runs` →
-`total_count: 0`) while every visible setting looked healthy: Actions enabled, both
+`total_count: 0`) while every visible setting looked healthy: Actions enabled, the
 workflows `active`, `allowed_actions: all`, public, not a fork. Only `workflow_dispatch`
 ran. **The fix is to toggle Actions off and back on** (`gh api -X PUT
 repos/<o>/<r>/actions/permissions -F enabled=false`, then `=true`), which clears the stale
@@ -364,32 +364,16 @@ release.yml -f tag=v<version>`.
   default (an unresolvable internal link fails the build); `--lenient` publishes
   anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
-- Pre-merge gate: `just gate` (fmt-check + clippy + cargo tests + the Node `editor.js` harness, `crates/compositor/tests/editor.test.cjs`)
+- Gate: `just gate`, the only check — run before work is called done (fmt-check + clippy + cargo tests + the Node `editor.js` harness, `crates/compositor/tests/editor.test.cjs`)
 
 ## Toolchain
 
 `rust-toolchain.toml` is the single source of truth for the Rust version — `just
-gate` and both GitHub workflows resolve from it (rustup reads it automatically),
-so a green gate locally means a green CI. Bump it deliberately, fixing any new
-clippy lints in the same change.
+gate` and `release.yml` resolve from it (rustup reads it automatically), so the
+published binary is built by the compiler the gate tested with. Bump it
+deliberately, fixing any new clippy lints in the same change.
 
-**Footgun: don't reintroduce a floating toolchain in CI.** A
-`dtolnay/rust-toolchain@stable` step overrides the file and silently restores the
-drift the pin exists to remove — a new stable lands a new clippy lint, CI goes red
-with no code change, and the local gate still passes on the older compiler. That
-cost a patch release once. The workflows install the pinned toolchain with `rustup
-show` for exactly this reason.
-
-## CI triggers
-
-**`just gate` is the real gate; CI is not a per-commit check.** CI runs on push to
-`main`, on `pull_request`, and on `workflow_dispatch` — see `.github/workflows/ci.yml`.
-
-**Footgun: don't add `dev` to CI's push triggers.** It reads as an obvious omission —
-`dev` is the integration trunk, so surely it should be gated — which is exactly why this
-note exists; the reasoning is wrong here and the mistake has been made. `dev` takes
-frequent, deliberately half-finished pushes (the house rule is commit-as-you-go, WIP
-commits and all), so gating each one burns CI minutes to report failures that are
-expected and already known. Correctness on `dev` is held by `just gate` locally, run
-before work is called done; CI's job is the release path (`main`) plus outside
-contributions (`pull_request`). Use `workflow_dispatch` to run CI on `dev` on demand.
+**Footgun: don't reintroduce a floating toolchain in `release.yml`.** A
+`dtolnay/rust-toolchain@stable` step overrides the file and silently ships a
+binary from a compiler the gate never ran. The workflow installs the pinned
+toolchain with `rustup show` for exactly this reason.

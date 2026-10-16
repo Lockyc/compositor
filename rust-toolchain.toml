@@ -1,12 +1,10 @@
 # The single source of truth for this repo's Rust toolchain. `just gate` locally
-# and both GitHub workflows resolve the toolchain from this file, so a green gate
-# on your machine means a green CI — that equivalence is the whole point.
+# and `release.yml` resolve the toolchain from this file, so the published binary
+# is built by the same compiler the gate tested with.
 #
 # Pinned to an exact version rather than `stable` because a floating stable breaks
-# the build with no code change: when a new stable lands a new clippy lint, CI
-# fails while the local gate still passes on the older compiler. Bump this
-# deliberately (and fix any new lints in the same change) instead of discovering
-# the bump through a red CI.
+# the build with no code change: a new stable lands a new clippy lint and the gate
+# fails. Bump this deliberately (and fix any new lints in the same change).
 [toolchain]
 channel = "1.97.0"
 components = ["rustfmt", "clippy"]

@@ -5,7 +5,6 @@ Markdown and get a themed, navigable static site. A drop-in replacement for MkDo
 with its render engine (`render-core`) also usable as a library.
 
 [![Release](https://img.shields.io/github/v/release/Lockyc/compositor?sort=semver&label=release)](https://github.com/Lockyc/compositor/releases/latest)
-[![CI](https://github.com/Lockyc/compositor/actions/workflows/ci.yml/badge.svg)](https://github.com/Lockyc/compositor/actions/workflows/ci.yml)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-555)
 [![Rust](https://img.shields.io/badge/rust-pinned%20(rust--toolchain.toml)-orange?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![License](https://img.shields.io/github/license/Lockyc/compositor)](LICENSE)
