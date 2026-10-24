@@ -1114,14 +1114,23 @@ mod tests {
         std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
 
         let page = get(addr, "/Meeting%20Notes.html");
-        assert!(page.contains("200 OK") && page.contains("Notes"), "spaced page: {page}");
+        assert!(
+            page.contains("200 OK") && page.contains("Notes"),
+            "spaced page: {page}"
+        );
         let asset = get(addr, "/my%20caf%C3%A9.png");
         assert!(asset.contains("200 OK"), "non-ASCII asset: {asset}");
         let escape = get(addr, "/%2e%2e%2fsecret");
-        assert!(!escape.contains("200 OK"), "encoded traversal must not resolve: {escape}");
+        assert!(
+            !escape.contains("200 OK"),
+            "encoded traversal must not resolve: {escape}"
+        );
 
         let rebound = get_with_host(addr, "/Meeting%20Notes.html", "evil.example");
-        assert!(rebound.contains("403"), "a foreign Host must be refused: {rebound}");
+        assert!(
+            rebound.contains("403"),
+            "a foreign Host must be refused: {rebound}"
+        );
 
         std::fs::remove_dir_all(&docs).ok();
     }
