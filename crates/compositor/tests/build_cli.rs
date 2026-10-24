@@ -220,6 +220,44 @@ fn build_works_on_bare_markdown_dir_without_docs_subdir() {
 }
 
 #[test]
+fn build_refuses_to_delete_an_authored_site_dir() {
+    let tmp =
+        std::env::temp_dir().join(format!("compositor-build-authored-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("site")).unwrap();
+    fs::write(tmp.join("index.md"), "# Home").unwrap();
+    fs::write(tmp.join("site/plan.md"), "# My site plans").unwrap();
+
+    let err = run_build(&tmp, LinkPolicy::Strict).unwrap_err();
+    assert!(
+        format!("{err:#}").contains("not a compositor build"),
+        "{err:#}"
+    );
+    assert!(
+        tmp.join("site/plan.md").exists(),
+        "authored content must survive"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
+fn failed_strict_build_keeps_the_last_good_site() {
+    let tmp = std::env::temp_dir().join(format!("compositor-build-keep-{}", std::process::id()));
+    let _ = fs::remove_dir_all(&tmp);
+    fs::create_dir_all(tmp.join("docs")).unwrap();
+    fs::write(tmp.join("docs/index.md"), "# Home").unwrap();
+    run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+    fs::write(tmp.join("docs/index.md"), "# Home\n\n[gone](missing.md)").unwrap();
+    assert!(run_build(&tmp, LinkPolicy::Strict).is_err());
+    assert!(
+        tmp.join("site/index.html").exists(),
+        "the last good site must stay up"
+    );
+    fs::remove_dir_all(&tmp).ok();
+}
+
+#[test]
 fn build_stylesheet_carries_admonition_rules() {
     let tmp = std::env::temp_dir().join(format!("compositor-build-adm-{}", std::process::id()));
     let _ = fs::remove_dir_all(&tmp);

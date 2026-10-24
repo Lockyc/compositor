@@ -10,14 +10,14 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
     let out = resolve_out_dir(project_dir, &docs, cfg.out_dir())?;
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::create_dir_all(&out)?;
 
     let excluder = Excluder::new(project_dir, &docs, &cfg.exclude);
     for w in excluder.warnings() {
         eprintln!("warning: {w}");
     }
 
+    // Every content error (a strict-policy dead link or image) surfaces here, before
+    // anything is deleted, so a failed build leaves the last good site in place.
     let mut site = build_site(&docs, policy, &excluder, false)?;
     // The two pages compositor renders from outside the docs tree resolve their
     // images against the repo root; `images` records what must be copied.
@@ -28,6 +28,10 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     // working `/` (see `resolve_home`). `build` ships no edit scaffolding.
     let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images, false)?;
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
+
+    ensure_build_output(&out)?;
+    let _ = std::fs::remove_dir_all(&out);
+    std::fs::create_dir_all(&out)?;
     for page in site.pages.iter().chain(home.as_ref()) {
         let (prev, next) = crate::render_page::neighbours(&order, &page.url);
         let html = render_page(&cfg, &site.nav, page, prev, next);
@@ -43,6 +47,26 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
 
     println!("built {} pages -> {}", site.pages.len(), out.display());
     Ok(())
+}
+
+/// Refuse to wipe an `out` that holds something other than a compositor build. It
+/// must be absent, empty, or carry the stylesheet every build writes — otherwise a
+/// bare notes folder with its own `site/` (the no-config default out_dir) would be
+/// deleted outright on the first build.
+fn ensure_build_output(out: &Path) -> Result<()> {
+    let empty = match std::fs::read_dir(out) {
+        Ok(mut entries) => entries.next().is_none(),
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(e) => return Err(e).with_context(|| format!("reading {}", out.display())),
+    };
+    if empty || out.join(crate::assets::CSS_URL).is_file() {
+        return Ok(());
+    }
+    Err(anyhow!(
+        "{} exists and is not a compositor build (no {}); refusing to delete it — set out_dir to another directory",
+        out.display(),
+        crate::assets::CSS_URL
+    ))
 }
 
 /// Resolve `out_dir` against `project_dir`, refusing any value that would make
