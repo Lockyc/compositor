@@ -67,3 +67,20 @@ body.editing [data-noedit] {
   outline-offset: 2px;
   background: color-mix(in srgb, var(--pico-muted-color) 6%, transparent);
 }
+
+/* --- Save conflict: the page changed on disk under an unsaved edit. Pinned
+   at the top so it can't be scrolled past; the edit stays below it. */
+.edit-conflict {
+  position: sticky;
+  top: 0;
+  z-index: 10;
+  padding: 0.6rem 1rem;
+  border-bottom: 1px solid var(--pico-del-color, #c62828);
+  background: color-mix(in srgb, var(--pico-del-color, #c62828) 14%, var(--pico-background-color));
+  color: var(--pico-color);
+}
+.edit-conflict button {
+  width: auto;
+  margin: 0 0 0 0.5rem;
+  padding: 0.2rem 0.8rem;
+}

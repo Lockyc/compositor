@@ -681,6 +681,14 @@
   var SAVE_DEBOUNCE_MS = 800;
   var saveTimer = null;
   var pendingUnsaved = false;
+  // What this page believes is on disk: the loaded source, then each write that
+  // landed. Sent with every save; the server refuses (409) when the file no longer
+  // matches, so an outside change is never overwritten with a page built from the
+  // old source.
+  var base = source;
+  // Set on a 409: autosave stops and the banner says why. The DOM edit stays on
+  // screen to be copied — it is not discarded, and the file is not touched.
+  var conflicted = false;
   // Set true after a successful pure-prose save; the reload hook consumes it to
   // suppress exactly one self-inflicted epoch bump (the DOM already shows the
   // edit). A raw save leaves it false so the reload proceeds and re-highlights.
@@ -725,7 +733,7 @@
       clearTimeout(saveTimer);
       saveTimer = null;
     }
-    if (!pendingUnsaved || !anyDirty()) return;
+    if (conflicted || !pendingUnsaved || !anyDirty()) return;
     var rawEdit = anyRawDirty();
     var newSource = reconstruct();
     pendingUnsaved = false;
@@ -735,10 +743,16 @@
     fetch("/__edit", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ url: url, source: newSource }),
+      body: JSON.stringify({ url: url, source: newSource, base: base }),
     })
       .then(function (r) {
-        if (!r.ok) {
+        if (r.ok) {
+          base = newSource;
+        } else if (r.status === 409) {
+          conflicted = true;
+          suppressReload = false;
+          showConflict();
+        } else {
           // The write did not land: don't claim a self-save, and let a future
           // reload through rather than swallowing it.
           pendingUnsaved = true;
@@ -775,8 +789,36 @@
       suppressReload = false;
       return true;
     }
+    // An outside change while an edit is unsaved (or already in conflict): keep the
+    // page. A pending edit is flushed, and the server's base check turns it into
+    // the conflict banner rather than a silent overwrite or a silent loss.
+    if (conflicted) return true;
+    if (pendingUnsaved || saveTimer) {
+      save();
+      return true;
+    }
     return false;
   };
+
+  function showConflict() {
+    if (document.querySelector(".edit-conflict")) return;
+    var banner = document.createElement("div");
+    banner.className = "edit-conflict";
+    banner.setAttribute("role", "alert");
+    banner.appendChild(
+      document.createTextNode(
+        "This page changed on disk since you started editing. Your edit is still here but was not saved — copy it, then reload. "
+      )
+    );
+    var reload = document.createElement("button");
+    reload.type = "button";
+    reload.textContent = "Reload";
+    reload.addEventListener("click", function () {
+      location.reload();
+    });
+    banner.appendChild(reload);
+    document.body.insertBefore(banner, document.body.firstChild);
+  }
 
   // Exposed for end-to-end verification drivers -- lets a driver
   // call reconstruct()/serializeBlock() directly. Not part of any runtime path.

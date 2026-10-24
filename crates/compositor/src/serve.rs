@@ -279,12 +279,14 @@ fn respond(req: Request, status: u16, ctype: &str, body: Vec<u8>) {
     let _ = req.respond(resp);
 }
 
-/// Body of a `POST /__edit` request: the site url being edited and its full
-/// replacement Markdown source.
+/// Body of a `POST /__edit` request: the site url being edited, its full
+/// replacement Markdown source, and `base` — the source the editor last loaded
+/// or wrote, which must still be what is on disk for the write to land.
 #[derive(serde::Deserialize)]
 struct EditRequest {
     url: String,
     source: String,
+    base: String,
 }
 
 /// A generous but bounded cap on the `/__edit` request body — large enough for
@@ -355,6 +357,11 @@ fn edit_is_same_origin(req: &Request) -> bool {
 /// (never from the client), so a client can never name an arbitrary
 /// filesystem path, only ask "write to the url you already mapped."
 ///
+/// A write whose `base` no longer matches the file on disk is refused `409`: the
+/// file changed under the editor (another editor, an agent, `git checkout`), and
+/// writing would overwrite that change with a page built from the old source.
+/// The editor keeps the user's edit on screen and stops autosaving instead.
+///
 /// The write is atomic: the new content lands in a temp sibling
 /// (`<path>.md.tmp-<pid>`, beside the symlink-resolved file) first, then an
 /// atomic rename replaces the target.
@@ -405,6 +412,10 @@ fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
     // pair). The temp file sits beside the real file so the rename stays on
     // one filesystem, and takes the original's permissions.
     let path = std::fs::canonicalize(&path).unwrap_or(path);
+    if std::fs::read_to_string(&path).is_ok_and(|current| current != edit.base) {
+        respond_text(req, 409, "changed on disk since it was loaded");
+        return;
+    }
     let tmp_path = path.with_extension(format!("md.tmp-{}", std::process::id()));
     let result = std::fs::write(&tmp_path, &edit.source)
         .and_then(|()| match std::fs::metadata(&path) {
@@ -1584,13 +1595,26 @@ mod tests {
         let ok = post(
             addr,
             "/__edit",
-            r##"{"url":"index.html","source":"# Edited\n\npara\n"}"##,
+            r##"{"url":"index.html","source":"# Edited\n\npara\n","base":"# One\n\npara\n"}"##,
         );
         assert!(ok.contains("200 OK"), "resp: {ok}");
         assert_eq!(std::fs::read_to_string(&src).unwrap(), "# Edited\n\npara\n");
 
+        // A base that is no longer what is on disk is a conflict, and the file is untouched.
+        let stale = post(
+            addr,
+            "/__edit",
+            r##"{"url":"index.html","source":"# Mine\n","base":"# One\n\npara\n"}"##,
+        );
+        assert!(stale.contains("409"), "resp: {stale}");
+        assert_eq!(std::fs::read_to_string(&src).unwrap(), "# Edited\n\npara\n");
+
         // An unmapped url is refused — cannot write an arbitrary path.
-        let bad = post(addr, "/__edit", r#"{"url":"../etc/x.html","source":"pwn"}"#);
+        let bad = post(
+            addr,
+            "/__edit",
+            r#"{"url":"../etc/x.html","source":"pwn","base":""}"#,
+        );
         assert!(bad.contains("403"), "resp: {bad}");
 
         std::fs::remove_dir_all(&tmp).ok();
@@ -1685,7 +1709,7 @@ mod tests {
         let ok = post(
             addr,
             "/__edit",
-            r##"{"url":"CLAUDE.html","source":"# C\n\nnew body\n"}"##,
+            r##"{"url":"CLAUDE.html","source":"# C\n\nnew body\n","base":"# C\n\nold body\n"}"##,
         );
         assert!(ok.contains("200 OK"), "resp: {ok}");
         assert_eq!(
@@ -1732,7 +1756,7 @@ mod tests {
         let bad = post_with_headers(
             addr,
             "/__edit",
-            r##"{"url":"index.html","source":"# HACKED\n"}"##,
+            r##"{"url":"index.html","source":"# HACKED\n","base":"# One\n\npara\n"}"##,
             &[("Sec-Fetch-Site", "cross-site")],
         );
         assert!(bad.contains("403"), "cross-site must be refused: {bad}");
@@ -1742,7 +1766,7 @@ mod tests {
         let ok = post_with_headers(
             addr,
             "/__edit",
-            r##"{"url":"index.html","source":"# Edited\n\npara\n"}"##,
+            r##"{"url":"index.html","source":"# Edited\n\npara\n","base":"# One\n\npara\n"}"##,
             &[("Sec-Fetch-Site", "same-origin")],
         );
         assert!(ok.contains("200 OK"), "same-origin must write: {ok}");
@@ -1853,7 +1877,7 @@ mod tests {
         let resp = post(
             addr,
             "/__edit",
-            r#"{"url":"index.html","source":"still alive"}"#,
+            r#"{"url":"index.html","source":"still alive","base":""}"#,
         );
         assert!(resp.contains("500"), "resp: {resp}");
         assert!(!bogus.exists(), "write must not have landed");
@@ -1895,7 +1919,11 @@ mod tests {
         let s = std::sync::Arc::clone(&server);
         std::thread::spawn(move || serve_loop(&s, state, d));
 
-        let resp = post(addr, "/__edit", r#"{"url":"index.html","source":"pwn"}"#);
+        let resp = post(
+            addr,
+            "/__edit",
+            r#"{"url":"index.html","source":"pwn","base":""}"#,
+        );
         assert!(resp.contains("404"), "resp: {resp}");
         assert_eq!(std::fs::read_to_string(&src).unwrap(), "# One\n\npara\n");
 
@@ -1980,7 +2008,11 @@ mod tests {
 
         let h = serve_handle_with(&tmp, false).expect("binds");
         let addr = std::net::SocketAddr::from(([127, 0, 0, 1], h.port));
-        let resp = post(addr, "/__edit", r#"{"url":"index.html","source":"x"}"#);
+        let resp = post(
+            addr,
+            "/__edit",
+            r#"{"url":"index.html","source":"x","base":""}"#,
+        );
         assert!(
             resp.contains("404"),
             "read-only handle must not expose /__edit: {resp}"
@@ -2057,7 +2089,7 @@ mod tests {
         let s = std::sync::Arc::clone(&server);
         std::thread::spawn(move || serve_loop(&s, state, d));
 
-        let body = r##"{"url":"index.html","source":"# HACKED\n"}"##;
+        let body = r##"{"url":"index.html","source":"# HACKED\n","base":"# One\n"}"##;
         for (host, origin) in [
             ("evil.example:1", "http://evil.example:1"),
             ("127.0.0.1.evil.example", "http://127.0.0.1.evil.example"),
@@ -2087,7 +2119,12 @@ mod tests {
             let ok = post_with_headers(
                 addr,
                 "/__edit",
-                r##"{"url":"index.html","source":"# Edited\n"}"##,
+                &serde_json::json!({
+                    "url": "index.html",
+                    "source": "# Edited\n",
+                    "base": std::fs::read_to_string(&src).unwrap(),
+                })
+                .to_string(),
                 &[("Host", &host), ("Sec-Fetch-Site", "same-origin")],
             );
             assert!(ok.contains("200 OK"), "Host {host} must write: {ok}");
@@ -2146,7 +2183,7 @@ mod tests {
         let ok = post(
             addr,
             "/__edit",
-            r##"{"url":"CLAUDE.html","source":"# A\n\nnew\n"}"##,
+            r##"{"url":"CLAUDE.html","source":"# A\n\nnew\n","base":"# A\n\nold\n"}"##,
         );
         assert!(ok.contains("200 OK"), "resp: {ok}");
         assert!(
@@ -2184,7 +2221,7 @@ mod tests {
         let ok = post_with_headers(
             addr,
             "/__edit",
-            r##"{"url":"index.html","source":"# R\n\nafter\n"}"##,
+            r##"{"url":"index.html","source":"# R\n\nafter\n","base":"# R\n\nbefore\n"}"##,
             &[("Sec-Fetch-Site", "same-origin")],
         );
         assert!(ok.contains("200 OK"), "resp: {ok}");
