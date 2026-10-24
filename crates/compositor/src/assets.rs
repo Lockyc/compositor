@@ -8,8 +8,7 @@ pub const PICO_CSS: &str = include_str!("../assets/pico.min.css");
 pub const OVERRIDES_CSS: &str = include_str!("../assets/compositor.css");
 pub const COMPOSITOR_JS: &str = include_str!("../assets/compositor.js");
 /// Inline-editing UI, embedded like the shell assets above but served only
-/// when `ServedSite::edit_enabled` — see `serve::handle`. Stub content for
-/// now; Tasks 7-9 fill in the toggle/autosave logic.
+/// when `ServedSite::edit_enabled` — see `serve::handle`.
 pub const EDITOR_CSS: &str = include_str!("../assets/editor.css");
 pub const EDITOR_JS: &str = include_str!("../assets/editor.js");
 

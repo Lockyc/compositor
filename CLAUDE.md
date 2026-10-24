@@ -10,16 +10,9 @@ A Rust static-site generator for Markdown doc repos, replacing MkDocs across a
 set of documentation sites. `compositor build <dir>` renders a directory of Markdown into a themed,
 tree-navigated static HTML site.
 
-**There is no site search, and adding one has not been decided.** A Pagefind
-integration was scaffolded in at M1 — inherited from MkDocs Material's defaults
-rather than chosen — and put a search box in every page's chrome that depended on
-a `pagefind` binary which was never installed on any build host. It therefore
-never worked once: every site shipped a dead search box, and every build printed
-`warning: pagefind not found on PATH`. It is now removed root and branch. Do not
-reintroduce search (Pagefind or otherwise) as a missing piece or a tidy-up — a
-capability that has never worked and was never chosen is a thing to delete, not
-to finish. If search is ever wanted, that is a decision to be made first, not a
-gap to be filled.
+**There is no site search; adding one is a decision to make first, not a gap to
+fill.** Don't reintroduce search (Pagefind or otherwise) as a missing piece or a
+tidy-up.
 
 **compositor owns the entire shell; Markdown is purely content.** The page chrome,
 navigation menu, link rewriting, titles, the home/landing page, and configuration
@@ -304,13 +297,12 @@ fast-forwards `main`, tags, creates the release with your notes, and waits for t
 binary to land.
 
 **Never `gh release create` by hand, and never let a workflow create the release.** Two creators
-race, and the loser publishes nothing. `release.yml` used to create it on tag push, so a
-manual create won the race and left a release carrying **zero assets** — which reads
-exactly like success. `just release` is the only creator; `release.yml` only *uploads*.
+race, and the loser publishes a release with **zero assets** — which reads exactly like
+success. `just release` is the only creator; `release.yml` only *uploads*.
 
 **Notes are written, not generated.** `--generate-notes` summarises merged PRs, and this
 repo integrates by direct merge to `dev` and opens none — so it yields a bare compare link
-that says nothing. mycelium shipped an empty release that way; don't repeat it.
+that says nothing.
 
 **Curating the `README.md` is part of cutting the release, not an extra.** The release
 is when the public face actually gets read, so it is when the README is reconciled
@@ -352,8 +344,7 @@ workflows `active`, `allowed_actions: all`, public, not a fork. Only `workflow_d
 ran. **The fix is to toggle Actions off and back on** (`gh api -X PUT
 repos/<o>/<r>/actions/permissions -F enabled=false`, then `=true`), which clears the stale
 state. Don't go hunting through workflow YAML for this — the workflows are not the
-problem. This no longer produces a *silent* empty release (`just release` waits on the
-assets and fails), but the recovery still matters: re-attach with `gh workflow run
+problem. `just release` waits on the assets and fails loudly; re-attach with `gh workflow run
 release.yml -f tag=v<version>`.
 
 ## Commands

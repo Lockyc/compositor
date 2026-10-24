@@ -115,8 +115,8 @@ the default browser.)
 
 ```sh
 just build    # cargo build
-just test     # cargo test
-just gate     # fmt-check + clippy + test (the pre-merge gate)
+just test     # cargo test + the editor.js Node harness
+just gate     # fmt-check + clippy + cargo test + the Node harness (the pre-merge gate)
 ```
 
 Branch model and release process live in [`CLAUDE.md`](CLAUDE.md).

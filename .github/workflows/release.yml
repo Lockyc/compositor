@@ -3,10 +3,9 @@ name: Release
 # This workflow ONLY attaches the Linux binary to a release that already exists.
 # `just release` creates the release, with human-written notes, from the Mac.
 #
-# It must never create the release itself. It used to (`gh release create` on tag
-# push), which raced `just release`: whichever ran second failed, and when the
-# workflow lost, it published *zero* assets onto a release that otherwise looked
-# fine — stranding every build host on the old binary. One creator, one uploader.
+# It must never create the release itself: two creators race, and when the
+# workflow loses it publishes *zero* assets onto a release that otherwise looks
+# fine, stranding every build host on the old binary. One creator, one uploader.
 on:
   release:
     types: [published]
