@@ -35,6 +35,10 @@ pub(crate) struct ServedSite {
     /// `setup` from the bind host (see `host_is_loopback`) and carried
     /// unchanged through every rebuild.
     pub(crate) edit_enabled: bool,
+    /// Whether the bind host is loopback — decided once in `setup`, apart from
+    /// `edit_enabled` (which an embedder may force off). A loopback site answers
+    /// only loopback `Host` headers, so a DNS-rebound name can't read it.
+    pub(crate) loopback_bind: bool,
 }
 
 /// The client script, baselined at the epoch the page was built at (not the
@@ -114,8 +118,11 @@ fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
     // (in a fenced code block, say) would otherwise close the tag early and
     // corrupt the page. The standard mitigation: escape every "</" the JSON
     // serializer could have emitted inside a string so no substring can ever
-    // match a tag-closing sequence.
-    let safe_json = payload_json.replace("</", "<\\/");
+    // match a tag-closing sequence. Every `<` is escaped, not just `</`: an
+    // unclosed `<!--` followed by `<script` would otherwise put the parser in a
+    // state where the payload's own `</script>` doesn't end the element. `<`
+    // only appears inside JSON strings, so `<` keeps it valid JSON.
+    let safe_json = payload_json.replace('<', "\\u003c");
     let scripts = format!(
         r#"<script type="application/json" id="__editsrc">{safe_json}</script><script src="{asset_prefix}{}" defer></script>"#,
         crate::assets::EDITOR_JS_URL
@@ -416,8 +423,24 @@ fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
 }
 
 fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
+    // DNS rebinding: a hostile name resolved to 127.0.0.1 reaches a loopback
+    // server with its own name in `Host`. Refuse it on every path, not just writes.
+    if state.read().expect("state lock").loopback_bind
+        && req_header(&req, "Host").is_some_and(|host| !host_header_is_loopback(host))
+    {
+        respond_text(req, 403, "forbidden host");
+        return;
+    }
+
     let raw = req.url().to_string();
-    let path_only = raw.split(['?', '#']).next().unwrap_or("");
+    let raw_path = raw.split(['?', '#']).next().unwrap_or("");
+    // Page urls keep literal spaces and non-ASCII, which the browser percent-encodes.
+    // Decode before the lookup; `is_safe` below checks the decoded url.
+    let Ok(decoded) = percent_encoding::percent_decode_str(raw_path).decode_utf8() else {
+        respond_text(req, 400, "bad path encoding");
+        return;
+    };
+    let path_only: &str = &decoded;
 
     if path_only == "/__reload" {
         let epoch = state.read().expect("state lock").epoch;
@@ -745,6 +768,7 @@ fn setup(
         root_assets,
         editable,
         edit_enabled,
+        loopback_bind: host_is_loopback(host),
     }));
 
     let watcher = spawn_watcher(
@@ -811,7 +835,8 @@ impl ServeHandle {
     /// truth. It reports `false` once the handle is stopped, which is honest: a stopped site is
     /// not live-reloading.
     pub fn live_reload(&self) -> bool {
-        self.watcher.is_some()
+        // A rebuild-thread panic ends the thread while the watcher handle is still held.
+        self.watcher.as_ref().is_some_and(|(_, t)| !t.is_finished())
     }
 
     /// Stop serving and watching, and wait for both threads to exit.
@@ -982,12 +1007,17 @@ mod tests {
             root_assets: HashMap::new(),
             editable: HashMap::new(),
             edit_enabled: false,
+            loopback_bind: true,
         }))
     }
 
     fn get(addr: std::net::SocketAddr, path: &str) -> String {
+        get_with_host(addr, path, &addr.to_string())
+    }
+
+    fn get_with_host(addr: std::net::SocketAddr, path: &str, host: &str) -> String {
         let mut stream = TcpStream::connect(addr).unwrap();
-        let req = format!("GET {path} HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n");
+        let req = format!("GET {path} HTTP/1.1\r\nHost: {host}\r\nConnection: close\r\n\r\n");
         stream.write_all(req.as_bytes()).unwrap();
         let mut resp = String::new();
         stream.read_to_string(&mut resp).unwrap();
@@ -1065,6 +1095,38 @@ mod tests {
     }
 
     #[test]
+    fn decodes_paths_and_refuses_foreign_hosts() {
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let docs =
+            std::env::temp_dir().join(format!("compositor-serve-decode-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&docs);
+        std::fs::create_dir_all(&docs).unwrap();
+        std::fs::write(docs.join("my café.png"), b"PNG").unwrap();
+        let state = sample_state(Excluder::new(&docs, &docs, &[]));
+        state
+            .write()
+            .unwrap()
+            .pages
+            .insert("Meeting Notes.html".into(), "<body>Notes</body>".into());
+        let docs_for_thread = docs.clone();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs_for_thread));
+
+        let page = get(addr, "/Meeting%20Notes.html");
+        assert!(page.contains("200 OK") && page.contains("Notes"), "spaced page: {page}");
+        let asset = get(addr, "/my%20caf%C3%A9.png");
+        assert!(asset.contains("200 OK"), "non-ASCII asset: {asset}");
+        let escape = get(addr, "/%2e%2e%2fsecret");
+        assert!(!escape.contains("200 OK"), "encoded traversal must not resolve: {escape}");
+
+        let rebound = get_with_host(addr, "/Meeting%20Notes.html", "evil.example");
+        assert!(rebound.contains("403"), "a foreign Host must be refused: {rebound}");
+
+        std::fs::remove_dir_all(&docs).ok();
+    }
+
+    #[test]
     fn serves_embedded_shell_css() {
         let docs = std::path::PathBuf::from(".");
         let state = sample_state(Excluder::new(&docs, &docs, &[]));
@@ -1099,6 +1161,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable: HashMap::new(),
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1213,6 +1276,7 @@ mod tests {
             root_assets,
             editable: HashMap::new(),
             edit_enabled: false,
+            loopback_bind: true,
         }));
 
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -1257,6 +1321,7 @@ mod tests {
             root_assets,
             editable,
             edit_enabled: false,
+            loopback_bind: true,
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
@@ -1480,6 +1545,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1581,6 +1647,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1626,6 +1693,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1674,6 +1742,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1707,6 +1776,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1745,6 +1815,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1789,6 +1860,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: false,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1822,6 +1894,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1949,6 +2022,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -2034,6 +2108,7 @@ mod tests {
             root_assets: HashMap::new(),
             editable,
             edit_enabled: true,
+            loopback_bind: true,
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();

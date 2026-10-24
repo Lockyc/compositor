@@ -44,8 +44,6 @@ Not bugs that block use — conscious deferrals.
     without checking.
   A host embedding this must detect a dead serve thread rather than trust the handle
   (lector drops its `live` dot on one). Defense-in-depth here: isolate each request (`catch_unwind`).
-  The entry's older suggestion — "move the serve loop off the main thread" — is done for the embedded
-  path and is not the fix for the CLI one.
 
 - **The 404 page carries no live-reload script.** A tab showing a dead link's
   404 will not auto-reload when the missing file is later created (the *linking*
@@ -69,28 +67,10 @@ Not bugs that block use — conscious deferrals.
   probability on loopback with small payloads, but matters most to a host calling `Drop` on a UI
   thread.
 
-- **`serve`'s on-demand asset branch does not percent-decode the request path.**
-  `GET /my%20image.png` 404s even for a plain docs asset that exists on disk as
-  `my image.png` — the request url is used as a lookup/path key verbatim, the
-  same shape of bug image resolution had (see `resolve_image` in
-  `render-core/src/markdown.rs`, which now decodes before resolving). Pre-existing,
-  independent of image resolution: it reproduces identically for an asset that
-  predates it. `build`'s output is unaffected — a static host decodes the request
-  normally; only `serve`'s own handler skips the step. Fix by percent-decoding the
-  request path before it's used as a lookup key, mirroring `resolve_image`.
-  **Constraint on that fix:** `is_safe` (`serve.rs`) validates the raw
-  request url, and the on-disk branch then joins that same raw url onto the
-  docs dir (the on-demand asset branch in `handle`). Decoding the path *before* the safety check would
-  let `%2e%2e%2f` become a literal `..` that `is_safe` had already waved
-  through as safe — a directory-traversal hole. Any decode-then-lookup change
-  must re-run `is_safe` (or an equivalent check) against the *decoded* path,
-  not just the raw one.
-
 - **`rewrite_link` (`render-core/src/markdown.rs`) never percent-decodes
   and only ever splits `#`, never `?`.** A link to a real file with a space —
   `[link](my%20page.md)` pointing at `my page.md` — hard-fails a strict build
-  as an unresolvable link, even though the file exists. Pre-existing (dates to
-  the original M1 link work) and independent of image resolution. The image
+  as an unresolvable link, even though the file exists. The image
   path one function away does handle it: `resolve_image` in the same module
   splits `#`/`?` off an image url and percent-decodes the remaining path
   before resolving, and is the model to follow if this is ever fixed. Fixing it would

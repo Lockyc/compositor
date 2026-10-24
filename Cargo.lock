@@ -282,6 +282,7 @@ dependencies = [
  "askama",
  "clap",
  "notify",
+ "percent-encoding",
  "render-core",
  "serde",
  "serde_json",
