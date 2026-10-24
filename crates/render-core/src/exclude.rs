@@ -67,7 +67,17 @@ impl Excluder {
         }
         // Lexical only — no disk access — so a `rel` that doesn't exist (an
         // on-demand asset request for a bogus URL) matches fine.
-        self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel))
+        self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel), false)
+    }
+
+    /// True when `rel` — a docs-dir-relative path to a **directory** — is kept
+    /// out, so a walk can prune it (`WalkDir::filter_entry`) instead of visiting
+    /// every file under `target/` or `.git/` only to exclude each one. By git's
+    /// directory-pruning rule nothing under an excluded directory is included.
+    pub fn is_excluded_dir(&self, rel: &Path) -> bool {
+        in_git_dir(rel)
+            || matches_patterns(rel, &self.patterns)
+            || self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel), true)
     }
 
     /// True when an **absolute** path is hidden by a repo `.gitignore`.
@@ -89,7 +99,7 @@ impl Excluder {
         match &self.repo_root {
             Some(root) if abs.starts_with(root) => {
                 in_git_dir(abs.strip_prefix(root).unwrap_or(abs))
-                    || self.is_ignored_under(root, abs)
+                    || self.is_ignored_under(root, abs, false)
             }
             // Not a git repo, or a path outside it: nothing is ignored.
             _ => false,
@@ -108,7 +118,7 @@ impl Excluder {
     /// parent) so the same short-circuit applies here: the moment one resolves
     /// to `Ignore`, the path is excluded regardless of what a nested rule would
     /// say.
-    fn is_ignored_under(&self, base: &Path, abs: &Path) -> bool {
+    fn is_ignored_under(&self, base: &Path, abs: &Path, is_dir: bool) -> bool {
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut cur = abs.parent();
         while let Some(d) = cur {
@@ -126,7 +136,7 @@ impl Excluder {
         }
         // No ancestor directory is ignored, so the path's own rule (including a
         // `!negation`) governs normally.
-        self.matched(abs, false).unwrap_or(false)
+        self.matched(abs, is_dir).unwrap_or(false)
     }
 
     /// Resolves `abs` against the matcher chain, deepest-first, honoring the
@@ -231,24 +241,30 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
 /// ignored ancestor directory before ever consulting a deeper matcher, so a
 /// nested `.gitignore` built here for a path under an ignored directory is
 /// built but never reached at match time.
-fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec<String>) {
-    let mut dirs: Vec<PathBuf> = docs_dir
-        .ancestors()
-        .take_while(|d| d.starts_with(repo_root))
-        .map(Path::to_path_buf)
+/// Whether a directory is ignored by `found`, deepest matcher first, as in git.
+fn dir_ignored(found: &[Gitignore], dir: &Path) -> bool {
+    let mut under: Vec<&Gitignore> = found
+        .iter()
+        .filter(|gi| dir.starts_with(gi.path()))
         .collect();
-    for entry in WalkDir::new(docs_dir).into_iter().filter_map(Result::ok) {
-        if entry.file_type().is_dir() && entry.path() != docs_dir {
-            dirs.push(entry.into_path());
+    under.sort_by_key(|gi| std::cmp::Reverse(gi.path().components().count()));
+    for gi in under {
+        match gi.matched_path_or_any_parents(dir, true) {
+            Match::Ignore(_) => return true,
+            Match::Whitelist(_) => return false,
+            Match::None => {}
         }
     }
+    false
+}
 
-    let mut found = Vec::new();
+fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec<String>) {
+    let mut found: Vec<Gitignore> = Vec::new();
     let mut warnings = Vec::new();
-    for dir in dirs {
+    let mut load = |dir: &Path, found: &mut Vec<Gitignore>| {
         let file = dir.join(".gitignore");
         if !file.is_file() {
-            continue;
+            return;
         }
         // `Gitignore::new` roots the matcher at the file's own parent, which is
         // what makes a nested `.gitignore` scope correctly. Do NOT swap this for
@@ -260,6 +276,30 @@ fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec
             warnings.push(format!("{}: {e}", file.display()));
         }
         found.push(gi);
+    };
+    for dir in docs_dir
+        .ancestors()
+        .take_while(|d| d.starts_with(repo_root))
+    {
+        load(dir, &mut found);
+    }
+    // Walk below the docs dir without descending into `.git` or a directory the
+    // docs dir's own and ancestor `.gitignore` files ignore (`target/`,
+    // `node_modules/`): git never reads a `.gitignore` there, and walking them is
+    // the whole cost on a bare-folder repo.
+    let walk = WalkDir::new(docs_dir).into_iter().filter_entry(|e| {
+        e.depth() == 0
+            || !e.file_type().is_dir()
+            || (e.file_name() != ".git" && !dir_ignored(&found, e.path()))
+    });
+    let mut below = Vec::new();
+    for entry in walk.filter_map(Result::ok) {
+        if entry.file_type().is_dir() && entry.depth() > 0 {
+            below.push(entry.into_path());
+        }
+    }
+    for dir in below {
+        load(&dir, &mut found);
     }
     // Sort shallowest-first by depth so `.rev()` at match time is deepest-first.
     // WalkDir is depth-first, so its raw order interleaves depths across branches.
@@ -348,6 +388,20 @@ mod tests {
     }
 
     // ---- gitignore ----
+
+    #[test]
+    fn excluded_dirs_are_reported_for_pruning() {
+        // Bare folder: the docs dir is the repo, so `target/` and `.git/` sit in it.
+        let d = project("gi-dirs", true);
+        write(&d, ".gitignore", "target/\n");
+        write(&d, "target/debug/x.o", "x");
+        let e = Excluder::new(&d, &d, &["drafts".to_string()]);
+        assert!(e.is_excluded_dir(Path::new("target")));
+        assert!(e.is_excluded_dir(Path::new(".git")));
+        assert!(e.is_excluded_dir(Path::new("drafts")));
+        assert!(!e.is_excluded_dir(Path::new("docs")));
+        let _ = fs::remove_dir_all(&d);
+    }
 
     #[test]
     fn gitignored_dir_is_excluded() {

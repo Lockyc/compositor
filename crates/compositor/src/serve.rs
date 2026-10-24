@@ -621,10 +621,28 @@ fn spawn_watcher(
     project_dir: PathBuf,
 ) -> Option<(RecommendedWatcher, JoinHandle<()>)> {
     let (tx, rx) = std::sync::mpsc::channel();
+    // With no `docs/`, the recursive watch is the whole repo: drop an event whose
+    // every path is one the site excludes (a `cargo build` in `target/`, a git
+    // operation in `.git/`), so it doesn't trigger a full rebuild. A `.gitignore`
+    // change always counts — it changes what is excluded.
+    let filter_state = Arc::clone(&state);
+    let filter_docs = docs.clone();
+    let relevant = move |path: &Path| {
+        if path.file_name().is_some_and(|n| n == ".gitignore") {
+            return true;
+        }
+        let Ok(rel) = path.strip_prefix(&filter_docs) else {
+            return true;
+        };
+        let excluder = Arc::clone(&filter_state.read().expect("state lock").excluder);
+        !excluder.is_excluded(rel)
+    };
     let mut watcher =
         match notify::recommended_watcher(move |res: notify::Result<notify::Event>| {
-            if res.is_ok() {
-                let _ = tx.send(());
+            if let Ok(event) = res {
+                if event.paths.is_empty() || event.paths.iter().any(|p| relevant(p)) {
+                    let _ = tx.send(());
+                }
             }
         }) {
             Ok(w) => w,

@@ -83,7 +83,19 @@ pub fn build_site(
     let mut known_urls = std::collections::HashSet::new();
     let mut assets = std::collections::HashSet::new();
     let mut wiki = WikiIndex::new();
-    for entry in WalkDir::new(docs_dir).sort_by_file_name() {
+    // Excluded directories are pruned, not walked file by file: a bare-folder
+    // site's docs dir is the whole repo, `target/` and `.git/` included.
+    let walk = WalkDir::new(docs_dir)
+        .sort_by_file_name()
+        .into_iter()
+        .filter_entry(|e| {
+            e.depth() == 0
+                || !e.file_type().is_dir()
+                || e.path()
+                    .strip_prefix(docs_dir)
+                    .is_ok_and(|rel| !excluder.is_excluded_dir(rel))
+        });
+    for entry in walk {
         let entry = entry?;
         let path = entry.path();
         if path.extension().and_then(|e| e.to_str()) != Some("md") {

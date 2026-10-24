@@ -144,10 +144,15 @@ fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
     // Skip the output tree: when the docs dir *is* the project dir (a bare
     // Markdown folder with no config), `out` sits inside `docs`, so without
     // this the walk would copy the freshly-written site back into itself.
-    for entry in WalkDir::new(docs)
-        .into_iter()
-        .filter_entry(|e| !e.path().starts_with(out))
-    {
+    // Excluded directories are pruned rather than walked file by file.
+    for entry in WalkDir::new(docs).into_iter().filter_entry(|e| {
+        !e.path().starts_with(out)
+            && (e.depth() == 0
+                || !e.file_type().is_dir()
+                || e.path()
+                    .strip_prefix(docs)
+                    .is_ok_and(|rel| !excluder.is_excluded_dir(rel)))
+    }) {
         let entry = entry?;
         let path = entry.path();
         if !entry.file_type().is_file() {
