@@ -4,9 +4,13 @@ use walkdir::WalkDir;
 
 use crate::exclude::Excluder;
 use crate::frontmatter::split_frontmatter;
-use crate::markdown::{first_h1, render_markdown, render_markdown_editable, LinkPolicy, TocEntry};
+use crate::markdown::{
+    first_h1, render_markdown, render_markdown_editable, ImageResolver, LinkPolicy, Rendered,
+    TocEntry,
+};
 use crate::nav::{tree_from_pages, NavTree};
 use crate::wikilink::WikiIndex;
+use std::collections::HashSet;
 
 pub struct Page {
     pub rel_path: PathBuf,
@@ -41,6 +45,40 @@ pub struct EditSource {
     /// target so a page whose source lives outside the docs dir (a repo-root
     /// README/CLAUDE/AGENTS) is addressable, not only docs-tree pages.
     pub path: PathBuf,
+}
+
+/// Render a page's `body` (`raw` with its frontmatter split off), and with an
+/// `edit_path` carry the `EditSource` that `/__edit` writes back through. The one
+/// home for `fm_lines`, which decides which file lines an inline edit replaces.
+#[allow(clippy::too_many_arguments)]
+pub fn render_page_source(
+    raw: &str,
+    body: &str,
+    page_dir: &Path,
+    known_urls: &HashSet<String>,
+    wiki: &WikiIndex,
+    policy: LinkPolicy,
+    images: &dyn ImageResolver,
+    edit_path: Option<PathBuf>,
+) -> Result<(Rendered, Option<EditSource>)> {
+    let Some(path) = edit_path else {
+        let rendered = render_markdown(body, page_dir, known_urls, wiki, policy, images)?;
+        return Ok((rendered, None));
+    };
+    let (rendered, line_map) =
+        render_markdown_editable(body, page_dir, known_urls, wiki, policy, images)?;
+    // `body` is a true suffix of `raw` (`split_frontmatter` either returns `raw`
+    // unchanged or a slice starting after the closing `---` line), so the byte
+    // offset where it starts is exactly the frontmatter-plus-delimiters prefix;
+    // counting that prefix's lines gives the number `split_frontmatter` stripped.
+    let fm_lines = raw[..raw.len() - body.len()].lines().count();
+    let source = EditSource {
+        source: raw.to_string(),
+        fm_lines,
+        line_map,
+        path,
+    };
+    Ok((rendered, Some(source)))
 }
 
 pub struct SiteModel {
@@ -147,30 +185,16 @@ pub fn build_site(
     let images = crate::markdown::DocsAssets::new(assets, policy);
     let mut pages = Vec::new();
     for (rel, page_dir, url, title, raw, body) in raws {
-        let (rendered, edit_source) = if edit {
-            let (rendered, line_map) =
-                render_markdown_editable(&body, &page_dir, &known_urls, &wiki, policy, &images)?;
-            // `body` is a true suffix of `raw` (`split_frontmatter` either
-            // returns `raw` unchanged or a slice starting after the closing
-            // `---` line), so the byte offset where it starts is exactly the
-            // frontmatter-plus-delimiters prefix; counting that prefix's lines
-            // gives the number `split_frontmatter` stripped.
-            let fm_lines = raw[..raw.len() - body.len()].lines().count();
-            (
-                rendered,
-                Some(EditSource {
-                    source: raw,
-                    fm_lines,
-                    line_map,
-                    path: docs_dir.join(&rel),
-                }),
-            )
-        } else {
-            (
-                render_markdown(&body, &page_dir, &known_urls, &wiki, policy, &images)?,
-                None,
-            )
-        };
+        let (rendered, edit_source) = render_page_source(
+            &raw,
+            &body,
+            &page_dir,
+            &known_urls,
+            &wiki,
+            policy,
+            &images,
+            edit.then(|| docs_dir.join(&rel)),
+        )?;
         pages.push(Page {
             url,
             rel_path: rel,

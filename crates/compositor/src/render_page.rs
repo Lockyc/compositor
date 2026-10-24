@@ -2,9 +2,9 @@ use crate::config::SiteConfig;
 use anyhow::Result;
 use askama::Template;
 use render_core::frontmatter::split_frontmatter;
-use render_core::markdown::{render_markdown, render_markdown_editable, ImageResolver, TocEntry};
+use render_core::markdown::{ImageResolver, TocEntry};
 use render_core::nav::{flatten, NavLink, NavNode, NavTree};
-use render_core::site::{EditSource, Page, SiteModel};
+use render_core::site::{render_page_source, Page, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -231,34 +231,16 @@ fn repo_readme_home(
     // *images* are a different matter — they resolve against the repo root and
     // either exist on disk or don't, so `images` carries the build's real
     // policy and a dead one still fails a strict build.
-    let (rendered, edit_source) = if edit {
-        let (rendered, line_map) = render_markdown_editable(
-            &body,
-            Path::new(""),
-            &HashSet::new(),
-            &render_core::wikilink::WikiIndex::new(),
-            LinkPolicy::Lenient,
-            images,
-        )?;
-        let fm_lines = raw[..raw.len() - body.len()].lines().count();
-        let es = EditSource {
-            source: raw.clone(),
-            fm_lines,
-            line_map,
-            path,
-        };
-        (rendered, Some(es))
-    } else {
-        let rendered = render_markdown(
-            &body,
-            Path::new(""),
-            &HashSet::new(),
-            &render_core::wikilink::WikiIndex::new(),
-            LinkPolicy::Lenient,
-            images,
-        )?;
-        (rendered, None)
-    };
+    let (rendered, edit_source) = render_page_source(
+        &raw,
+        &body,
+        Path::new(""),
+        &HashSet::new(),
+        &render_core::wikilink::WikiIndex::new(),
+        LinkPolicy::Lenient,
+        images,
+        edit.then_some(path),
+    )?;
     let title = fm
         .title
         .or(rendered.first_h1)
@@ -338,36 +320,16 @@ fn surface_repo_instruction_file(
         return Ok(None);
     }
     let (_fm, body) = split_frontmatter(&raw);
-    let (rendered, edit_source) = if edit {
-        let (rendered, line_map) = render_markdown_editable(
-            &body,
-            Path::new(""),
-            &HashSet::new(),
-            &render_core::wikilink::WikiIndex::new(),
-            LinkPolicy::Lenient,
-            images,
-        )?;
-        let fm_lines = raw[..raw.len() - body.len()].lines().count();
-        (
-            rendered,
-            Some(EditSource {
-                source: raw.clone(),
-                fm_lines,
-                line_map,
-                path,
-            }),
-        )
-    } else {
-        let rendered = render_markdown(
-            &body,
-            Path::new(""),
-            &HashSet::new(),
-            &render_core::wikilink::WikiIndex::new(),
-            LinkPolicy::Lenient,
-            images,
-        )?;
-        (rendered, None)
-    };
+    let (rendered, edit_source) = render_page_source(
+        &raw,
+        &body,
+        Path::new(""),
+        &HashSet::new(),
+        &render_core::wikilink::WikiIndex::new(),
+        LinkPolicy::Lenient,
+        images,
+        edit.then_some(path),
+    )?;
     site.pages.push(Page {
         url: url.clone(),
         rel_path: PathBuf::from(format!("{label}.md")),
