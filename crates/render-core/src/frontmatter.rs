@@ -9,17 +9,22 @@ pub struct FrontMatter {
 }
 
 pub fn split_frontmatter(input: &str) -> (FrontMatter, String) {
-    // Frontmatter must start on the very first line as `---`.
-    let rest = match input.strip_prefix("---\n") {
-        Some(r) => r,
-        None => return (FrontMatter::default(), input.to_string()),
+    // Frontmatter must start on the very first line as `---`, with LF or CRLF
+    // endings (a Windows-authored or autocrlf file). `body` stays a true suffix
+    // of `input`, which the editor's frontmatter line count depends on.
+    let (rest, close) = if let Some(r) = input.strip_prefix("---\n") {
+        (r, "\n---\n")
+    } else if let Some(r) = input.strip_prefix("---\r\n") {
+        (r, "\r\n---\r\n")
+    } else {
+        return (FrontMatter::default(), input.to_string());
     };
     // Find the closing delimiter line.
-    let Some(end) = rest.find("\n---\n") else {
+    let Some(end) = rest.find(close) else {
         return (FrontMatter::default(), input.to_string());
     };
     let yaml = &rest[..end];
-    let body = &rest[end + "\n---\n".len()..];
+    let body = &rest[end + close.len()..];
     let fm = serde_yaml::from_str::<FrontMatter>(yaml).unwrap_or_default();
     (fm, body.to_string())
 }
@@ -41,6 +46,16 @@ mod tests {
         let (fm, body) = split_frontmatter(input);
         assert_eq!(fm.title.as_deref(), Some("My Page"));
         assert_eq!(body, "# Body\n");
+    }
+
+    #[test]
+    fn crlf_frontmatter_is_recognised() {
+        let input = "---\r\ntitle: Win\r\naliases: [w]\r\n---\r\n# Body\r\n";
+        let (fm, body) = split_frontmatter(input);
+        assert_eq!(fm.title.as_deref(), Some("Win"));
+        assert_eq!(fm.aliases, vec!["w".to_string()]);
+        assert_eq!(body, "# Body\r\n");
+        assert!(input.ends_with(&body));
     }
 
     #[test]

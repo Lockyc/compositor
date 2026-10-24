@@ -1,4 +1,4 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::path::{Path, PathBuf};
 use walkdir::WalkDir;
 
@@ -102,7 +102,18 @@ pub fn build_site(
         if excluder.is_excluded(&rel) {
             continue;
         }
-        let raw = std::fs::read_to_string(path)?;
+        // Under Lenient (serve), one unreadable page — not UTF-8, or a dangling
+        // symlink — is skipped with a warning, so it can't freeze every later
+        // rebuild or stop serve starting. It is skipped rather than decoded lossily
+        // because an inline edit would write the replacement characters back.
+        let raw = match std::fs::read_to_string(path) {
+            Ok(raw) => raw,
+            Err(e) if policy == LinkPolicy::Lenient => {
+                eprintln!("warning: skipping {}: {e}", rel.display());
+                continue;
+            }
+            Err(e) => return Err(e).with_context(|| format!("reading {}", rel.display())),
+        };
         let (fm, body) = split_frontmatter(&raw);
         let page_dir = rel.parent().unwrap_or_else(|| Path::new("")).to_path_buf();
         let stem = path
@@ -228,6 +239,20 @@ mod tests {
             "got: {}",
             home.html
         );
+        let _ = fs::remove_dir_all(&d);
+    }
+
+    #[test]
+    fn lenient_skips_unreadable_pages_and_strict_refuses() {
+        let d = scratch("lenient-unreadable");
+        write(&d, "index.md", "# Home\n");
+        fs::write(d.join("latin1.md"), b"caf\xe9\n").unwrap();
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(d.join("gone.md"), d.join("dangling.md")).unwrap();
+        let ex = Excluder::new(&d, &d, &[]);
+        let site = build_site(&d, LinkPolicy::Lenient, &ex, false).unwrap();
+        assert_eq!(site.pages.len(), 1, "only the readable page renders");
+        assert!(build_site(&d, LinkPolicy::Strict, &ex, false).is_err());
         let _ = fs::remove_dir_all(&d);
     }
 
