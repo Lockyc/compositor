@@ -21,7 +21,9 @@ refreshes open browser tabs.
 **Edit in place.** On a loopback `serve`, a topbar toggle flips the site into an
 in-place editor: click a paragraph, heading, list, table, or code block and edit it
 as rendered — changes autosave to the source `.md` and live-reload swaps the result
-back in. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
+back in. If the file changes on disk while you're editing (another editor, an agent, a
+checkout), the save is refused instead of overwriting it: your edit stays on screen with a
+banner to copy it and reload. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
 around them stay byte-for-byte. It's off on any non-loopback bind
 (`serve --host 0.0.0.0`) and never present in `build` output.
 
@@ -88,17 +90,20 @@ a bare folder of Markdown builds and serves with no config. In a `compositor.tom
 an unknown key or a syntax/type error fails the run.
 
 Paths your repo's `.gitignore` ignores are skipped — in rendering, asset-copy, and
-`serve`'s on-demand asset serving. Only the repo's own `.gitignore` files count (not
+`serve`'s on-demand asset serving and file watcher. Only the repo's own `.gitignore` files count (not
 the global `~/.config/git/ignore` or `.git/info/exclude`), and outside a git repo
 nothing is skipped. `exclude` covers files git does track: a
 list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a directory
 you keep in git but don't publish. Both apply. The rendered site lands in
-`out_dir`, which must not be, or contain, the project or docs dir; nothing under
+`out_dir`, which must not be, or contain, the project or docs dir. An existing
+`out_dir` must be empty or a previous compositor build — `build` refuses to replace
+anything else — and a failed build leaves the previous site in place. Nothing under
 `.git` is ever published or served.
 
 By default `build` is strict: an unresolvable internal link — or an image whose
 file isn't there — fails the build. Pass `--lenient` to publish anyway, rendering
-either as a 404. `serve` is always lenient.
+either as a 404. Lenient also skips, with a warning, a page it can't read (not UTF-8,
+or a dangling symlink); strict fails on it. `serve` is always lenient.
 
 For local editing, `serve` watches the docs tree and live-reloads the browser on
 every change:
@@ -109,7 +114,9 @@ every change:
 
 (`--dir` defaults to `.` and `--host` to `127.0.0.1`; omit `--port` to let the OS pick a free port —
 the bound URL is printed on start — or pass `--port` to pin one. `--open` launches
-the default browser.)
+the default browser. A loopback-bound `serve` answers only requests addressed to a
+loopback host — `localhost`, `127.0.0.1`, `[::1]` — so to reach it through a proxy
+under another name, bind a non-loopback `--host`.)
 
 ## Development
 
