@@ -155,7 +155,7 @@ fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
     }) {
         let entry = entry?;
         let path = entry.path();
-        if !entry.file_type().is_file() {
+        if !excluder.is_contained_file(path) {
             continue;
         }
         if path.extension().and_then(|e| e.to_str()) == Some("md") {

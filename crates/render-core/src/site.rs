@@ -140,7 +140,7 @@ pub fn build_site(
             // Non-Markdown files are the site's assets. Collect them (same
             // Excluder as the pages) so images can be validated in pass 2;
             // compositor's `copy_assets` is what actually mirrors them out.
-            if entry.file_type().is_file() {
+            if excluder.is_contained_file(path) {
                 let rel = path.strip_prefix(docs_dir)?;
                 if !excluder.is_excluded(rel) {
                     assets.insert(rel.to_string_lossy().replace('\\', "/"));

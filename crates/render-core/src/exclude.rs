@@ -170,6 +170,23 @@ impl Excluder {
     pub fn warnings(&self) -> &[String] {
         &self.warnings
     }
+
+    /// True when `path` is a file the site may publish as an asset: a regular
+    /// file, or a symlink to one, whose canonical target stays inside the repo
+    /// root (the docs dir outside a git repo) — the containment `RootAssets`
+    /// applies. `build_site`'s asset set, `copy_assets` and `serve`'s on-demand
+    /// branch all ask this, so a symlinked image builds exactly when it serves,
+    /// and a link out of the tree (`docs/x -> /etc`) does neither.
+    pub fn is_contained_file(&self, path: &Path) -> bool {
+        let Ok(target) = std::fs::canonicalize(path) else {
+            return false;
+        };
+        let bound = match &self.repo_root {
+            Some(root) if self.docs_dir.starts_with(root) => root,
+            _ => &self.docs_dir,
+        };
+        target.is_file() && target.starts_with(bound)
+    }
 }
 
 /// Falling back to the path as given when canonicalization fails silently
@@ -222,25 +239,6 @@ fn find_repo_root(start: &Path) -> Option<PathBuf> {
         .map(Path::to_path_buf)
 }
 
-/// Every `.gitignore` that can govern a path under `docs_dir`: the repo root,
-/// each directory between it and `docs_dir`, and each directory beneath it.
-///
-/// Deliberately not "every directory under `project_dir`" — that would walk
-/// `target/`, which Cargo seeds with its own `.gitignore` containing `*`. This
-/// only avoids that in practice when `docs_dir` is a subdir of `project_dir`
-/// (the common case, e.g. `docs/`). In the no-config bare-Markdown-folder
-/// default, `docs_dir == project_dir`, so the walk below descends `target/`,
-/// `.git/`, and `.claude/worktrees/` the same as any other directory. That is
-/// harmless, not a correctness gap: `build_site` walks that exact same tree
-/// to render it, so collecting their `.gitignore` files costs nothing extra
-/// and `target/`'s own `*` rule is simply one more (unreachable, since
-/// `target/` sits outside any `docs_dir` a site would render) matcher.
-///
-/// A `.gitignore` *inside* an already-ignored directory is collected too.
-/// That is wasted but harmless: `Excluder::is_excluded` prunes at the first
-/// ignored ancestor directory before ever consulting a deeper matcher, so a
-/// nested `.gitignore` built here for a path under an ignored directory is
-/// built but never reached at match time.
 /// Whether a directory is ignored by `found`, deepest matcher first, as in git.
 fn dir_ignored(found: &[Gitignore], dir: &Path) -> bool {
     let mut under: Vec<&Gitignore> = found
@@ -258,6 +256,15 @@ fn dir_ignored(found: &[Gitignore], dir: &Path) -> bool {
     false
 }
 
+/// Every `.gitignore` that can govern a path under `docs_dir`: the repo root,
+/// each directory between it and `docs_dir`, and each directory beneath it.
+///
+/// The walk below `docs_dir` prunes `.git` and any directory ignored by the
+/// ancestor or docs-root `.gitignore` files (`target/`, `node_modules/`), so a
+/// bare-folder site doesn't pay for them. A directory ignored only by a *nested*
+/// `.gitignore` is still walked — that file is loaded after the walk — which is
+/// wasted but harmless: `Excluder::is_excluded` prunes at the first ignored
+/// ancestor before ever consulting a deeper matcher.
 fn collect_gitignores(repo_root: &Path, docs_dir: &Path) -> (Vec<Gitignore>, Vec<String>) {
     let mut found: Vec<Gitignore> = Vec::new();
     let mut warnings = Vec::new();
@@ -331,6 +338,31 @@ mod tests {
         let p = dir.join(rel);
         fs::create_dir_all(p.parent().unwrap()).unwrap();
         fs::write(p, body).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn contained_file_follows_in_repo_symlinks_only() {
+        use std::os::unix::fs::symlink;
+        let d = project("contained", true);
+        write(&d, "assets/logo.png", "png");
+        write(&d, "docs/real.png", "png");
+        symlink(d.join("assets/logo.png"), d.join("docs/logo.png")).unwrap();
+        symlink("/etc/hosts", d.join("docs/hosts")).unwrap();
+        fs::create_dir_all(d.join("docs/dir")).unwrap();
+        let e = Excluder::new(&d, &d.join("docs"), &[]);
+        assert!(e.is_contained_file(&d.join("docs/real.png")));
+        assert!(
+            e.is_contained_file(&d.join("docs/logo.png")),
+            "in-repo symlink"
+        );
+        assert!(
+            !e.is_contained_file(&d.join("docs/hosts")),
+            "escapes the repo"
+        );
+        assert!(!e.is_contained_file(&d.join("docs/dir")), "a directory");
+        assert!(!e.is_contained_file(&d.join("docs/missing.png")));
+        let _ = fs::remove_dir_all(&d);
     }
 
     // ---- `exclude` patterns (behaviour preserved from the free function) ----

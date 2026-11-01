@@ -14,8 +14,9 @@ enum Command {
     Build {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
-        /// Publish even when an internal link is unresolvable (render it as an
-        /// honest 404) instead of failing the build. For unattended pipelines.
+        /// Publish despite content errors — unresolvable links, wikilinks and
+        /// images render as 404s; unreadable pages are skipped with a warning —
+        /// instead of failing the build. For unattended pipelines.
         #[arg(long)]
         lenient: bool,
     },

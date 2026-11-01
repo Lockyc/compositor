@@ -92,8 +92,8 @@ struct EditPayload<'a> {
 
 /// Inject the edit-mode scaffolding into one already-rendered page: the editor
 /// stylesheet, the toggle button, and the page's payload + client script.
-/// Mirrors `inject_reload`'s splice-before-marker approach (`rfind`, degrade
-/// to appending if the marker is missing — a rendered page always has all
+/// Mirrors `inject_reload`'s splice-before-marker approach (degrade to
+/// appending if the marker is missing — a rendered page always has all
 /// three, but this must never panic on a hand-crafted or future template).
 /// Call this *after* `inject_reload` so the reload script and the editor
 /// script both land before `</body>`, reload first.
@@ -102,13 +102,15 @@ fn inject_editor(html: &str, payload_json: &str, asset_prefix: &str) -> String {
         r#"<link rel="stylesheet" href="{asset_prefix}{}">"#,
         crate::assets::EDITOR_CSS_URL
     );
-    let out = match html.rfind("</head>") {
+    // `</head>` and the topbar's `</header>` precede the body in the template, so the
+    // FIRST occurrence is theirs — a raw `<header>` in page content comes later.
+    let out = match html.find("</head>") {
         Some(i) => format!("{}{}{}", &html[..i], css, &html[i..]),
         None => format!("{html}{css}"),
     };
 
     let toggle = r#"<button type="button" class="edit-toggle">Edit</button>"#;
-    let out = match out.rfind("</header>") {
+    let out = match out.find("</header>") {
         Some(i) => format!("{}{}{}", &out[..i], toggle, &out[i..]),
         None => format!("{out}{toggle}"),
     };
@@ -352,14 +354,14 @@ fn edit_is_same_origin(req: &Request) -> bool {
 ///
 /// `state.editable` is the sole authority for what a url may write to (see
 /// its doc comment) — it only ever holds urls resolved to a real, existing
-/// backing file. This still re-checks `is_safe` on the *client-supplied* url
-/// as defense-in-depth: the write path itself always comes from the map
-/// (never from the client), so a client can never name an arbitrary
-/// filesystem path, only ask "write to the url you already mapped."
+/// backing file. The write path always comes from the map, never from the
+/// client, so a client can only ask "write to the url you already mapped."
 ///
-/// A write whose `base` no longer matches the file on disk is refused `409`: the
-/// file changed under the editor (another editor, an agent, `git checkout`), and
-/// writing would overwrite that change with a page built from the old source.
+/// A write whose `base` no longer matches the file on disk — or whose file can
+/// no longer be read, e.g. deleted before the rebuild drops its url — is refused
+/// `409`: the file changed under the editor (another editor, an agent,
+/// `git checkout`), and writing would overwrite that change, or recreate the
+/// removed file, with a page built from the old source.
 /// The editor keeps the user's edit on screen and stops autosaving instead.
 ///
 /// The write is atomic: the new content lands in a temp sibling
@@ -399,12 +401,9 @@ fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
         .editable
         .get(&edit.url)
         .cloned();
-    let path = match mapped {
-        Some(p) if is_safe(&edit.url) => p,
-        _ => {
-            respond_text(req, 403, "not an editable target");
-            return;
-        }
+    let Some(path) = mapped else {
+        respond_text(req, 403, "not an editable target");
+        return;
     };
 
     // Write through a symlink, not over it: renaming onto the link itself would
@@ -412,7 +411,7 @@ fn handle_edit(mut req: Request, state: &RwLock<ServedSite>) {
     // pair). The temp file sits beside the real file so the rename stays on
     // one filesystem, and takes the original's permissions.
     let path = std::fs::canonicalize(&path).unwrap_or(path);
-    if std::fs::read_to_string(&path).is_ok_and(|current| current != edit.base) {
+    if !std::fs::read_to_string(&path).is_ok_and(|current| current == edit.base) {
         respond_text(req, 409, "changed on disk since it was loaded");
         return;
     }
@@ -537,7 +536,7 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     let excluder = Arc::clone(&state.read().expect("state lock").excluder);
     if is_safe(&url) && !url.ends_with(".md") && !excluder.is_excluded(Path::new(&url)) {
         let asset = docs.join(&url);
-        if asset.is_file() {
+        if excluder.is_contained_file(&asset) {
             if let Ok(bytes) = std::fs::read(&asset) {
                 respond(req, 200, content_type(&url), bytes);
                 return;
@@ -637,11 +636,21 @@ fn spawn_watcher(
     // operation in `.git/`), so it doesn't trigger a full rebuild. A `.gitignore`
     // change always counts — it changes what is excluded.
     let filter_state = Arc::clone(&state);
-    let filter_docs = docs.clone();
+    // Both sides canonical: FSEvents reports absolute, canonical paths, while
+    // `docs` is as given (`.` under the default `--dir .`). A deleted file can't be
+    // canonicalized, so its parent is.
+    let filter_docs = std::fs::canonicalize(&docs).unwrap_or_else(|_| docs.clone());
     let relevant = move |path: &Path| {
         if path.file_name().is_some_and(|n| n == ".gitignore") {
             return true;
         }
+        let path = std::fs::canonicalize(path)
+            .ok()
+            .or_else(|| {
+                let parent = std::fs::canonicalize(path.parent()?).ok()?;
+                Some(parent.join(path.file_name()?))
+            })
+            .unwrap_or_else(|| path.to_path_buf());
         let Ok(rel) = path.strip_prefix(&filter_docs) else {
             return true;
         };
@@ -762,19 +771,11 @@ struct Serving {
 /// Load the config, build the site, start the watcher, and bind the port — everything up to
 /// (but not including) the blocking request loop.
 ///
-/// `edit_override` is the embedding read-only opt-out: `None` leaves edit
-/// capability loopback-derived (the CLI and the default `serve_handle`),
-/// `Some(false)` forces it off regardless of the bind host (an embedded host
-/// that wants a read-only site), and `Some(true)` would force it on. A forced
-/// value wins over `host_is_loopback` so an embedded consumer can decline the
-/// write endpoint even on loopback — no `/__edit`, no editor assets, no
-/// injection.
-fn setup(
-    project_dir: &Path,
-    host: &str,
-    port: Option<u16>,
-    edit_override: Option<bool>,
-) -> Result<Serving> {
+/// `allow_edit = false` is the embedding read-only opt-out: edit capability is
+/// off regardless of the bind host — no `/__edit`, no editor assets, no
+/// injection. `true` leaves it loopback-derived; nothing can turn it on for a
+/// non-loopback bind.
+fn setup(project_dir: &Path, host: &str, port: Option<u16>, allow_edit: bool) -> Result<Serving> {
     let cfg = SiteConfig::load(project_dir)?;
     let docs = cfg.docs_path(project_dir);
 
@@ -783,9 +784,7 @@ fn setup(
         eprintln!("warning: {w}");
     }
 
-    // Loopback-derived by default; an embedded host may force it off (or on)
-    // via `edit_override`, which then wins over the bind host.
-    let edit_enabled = edit_override.unwrap_or_else(|| host_is_loopback(host));
+    let edit_enabled = allow_edit && host_is_loopback(host);
 
     let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, edit_enabled)?;
     let (pages, root_assets, editable) =
@@ -823,7 +822,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
         docs,
         // Held until this function returns; dropping it would disable live-reload.
         watcher: _watcher,
-    } = setup(project_dir, host, port, None)?;
+    } = setup(project_dir, host, port, true)?;
 
     let listen = server.server_addr();
     println!("compositor serving {} on http://{listen}/", docs.display());
@@ -921,17 +920,15 @@ pub fn serve_handle(project_dir: &Path) -> Result<ServeHandle> {
 /// loopback-derived, which on the loopback bind means on). `editable = false`
 /// forces edit capability off regardless of the loopback bind: no `/__edit`
 /// endpoint, no editor assets, and no editor scaffolding injected into pages —
-/// a read-only embedded site. The opt-out is threaded through `setup` as an
-/// `edit_override`, the single place the flag is decided.
+/// a read-only embedded site. The flag is passed to `setup`, the single place
+/// edit capability is decided.
 pub fn serve_handle_with(project_dir: &Path, editable: bool) -> Result<ServeHandle> {
-    // `true` leaves edit loopback-derived (on, here); `false` forces it off.
-    let edit_override = if editable { None } else { Some(false) };
     let Serving {
         server,
         state,
         docs,
         watcher,
-    } = setup(project_dir, "127.0.0.1", None, edit_override)?;
+    } = setup(project_dir, "127.0.0.1", None, editable)?;
 
     let port = server
         .server_addr()
@@ -1014,6 +1011,19 @@ mod tests {
             !out.contains("=== null"),
             "no first-poll baseline logic: {out}"
         );
+    }
+
+    #[test]
+    fn inject_editor_puts_the_toggle_in_the_topbar_not_a_content_header() {
+        let html = "<head></head><body><header class=\"topbar\"></header>\
+                    <main id=\"doc\"><header>raw</header></main></body>";
+        let out = inject_editor(html, "{}", "/");
+        let toggle = out.find("edit-toggle").expect("toggle injected");
+        assert!(
+            toggle < out.find("id=\"doc\"").unwrap(),
+            "toggle landed in page content: {out}"
+        );
+        assert!(out.find("<link").unwrap() < out.find("</head>").unwrap());
     }
 
     #[test]
@@ -1852,13 +1862,20 @@ mod tests {
         let _ = std::fs::remove_dir_all(&tmp);
         let docs = tmp.join("docs");
         std::fs::create_dir_all(&docs).unwrap();
-        // Deliberately never created: the mapped target's parent directory
-        // doesn't exist, so the atomic write's temp-sibling `fs::write` must
-        // fail with an IO error rather than the file ever landing.
-        let bogus = docs.join("missing-dir").join("ghost.md");
+        // An existing page in a read-only directory: the base check passes, and
+        // the atomic write's temp-sibling `fs::write` fails with an IO error.
+        let ro = docs.join("ro");
+        std::fs::create_dir_all(&ro).unwrap();
+        let page = ro.join("page.md");
+        std::fs::write(&page, "orig").unwrap();
+        let set_mode = |mode| {
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&ro, std::fs::Permissions::from_mode(mode)).unwrap();
+        };
+        set_mode(0o555);
 
         let mut editable = HashMap::new();
-        editable.insert("index.html".to_string(), bogus.clone());
+        editable.insert("index.html".to_string(), page.clone());
         let state = Arc::new(RwLock::new(ServedSite {
             pages: HashMap::new(),
             epoch: 0,
@@ -1877,15 +1894,56 @@ mod tests {
         let resp = post(
             addr,
             "/__edit",
-            r#"{"url":"index.html","source":"still alive","base":""}"#,
+            r#"{"url":"index.html","source":"still alive","base":"orig"}"#,
         );
+        set_mode(0o755);
         assert!(resp.contains("500"), "resp: {resp}");
-        assert!(!bogus.exists(), "write must not have landed");
+        assert_eq!(
+            std::fs::read_to_string(&page).unwrap(),
+            "orig",
+            "write must not have landed"
+        );
 
         // The failed write must not have taken the serve loop down: the same
         // connection-per-request loop must still answer the next request.
         let again = get(addr, "/__reload");
         assert!(again.contains("200 OK"), "resp after failure: {again}");
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn edit_endpoint_409s_when_the_page_was_deleted() {
+        let tmp = std::env::temp_dir().join(format!("comp-editep-gone-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        let docs = tmp.join("docs");
+        std::fs::create_dir_all(&docs).unwrap();
+        // Still mapped (the rebuild hasn't dropped it yet), but gone from disk.
+        let gone = docs.join("gone.md");
+
+        let mut editable = HashMap::new();
+        editable.insert("index.html".to_string(), gone.clone());
+        let state = Arc::new(RwLock::new(ServedSite {
+            pages: HashMap::new(),
+            epoch: 0,
+            excluder: Arc::new(Excluder::new(&tmp, &docs, &[])),
+            root_assets: HashMap::new(),
+            editable,
+            edit_enabled: true,
+            loopback_bind: true,
+        }));
+        let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
+        let addr = server.server_addr().to_ip().unwrap();
+        let s = std::sync::Arc::clone(&server);
+        std::thread::spawn(move || serve_loop(&s, state, docs));
+
+        let resp = post(
+            addr,
+            "/__edit",
+            r#"{"url":"index.html","source":"x","base":"x"}"#,
+        );
+        assert!(resp.contains("409"), "resp: {resp}");
+        assert!(!gone.exists(), "a deleted page must not be recreated");
 
         std::fs::remove_dir_all(&tmp).ok();
     }
