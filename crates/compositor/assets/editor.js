@@ -748,15 +748,17 @@
       .then(function (r) {
         if (r.ok) {
           base = newSource;
-        } else if (r.status === 409) {
+        } else {
+          // The server refused the write (409 stale base, 403 page no longer
+          // editable, 500 write failed): stop autosaving and say so, keeping the
+          // edit on screen. Only a network failure (the catch) retries.
           conflicted = true;
           suppressReload = false;
-          showConflict();
-        } else {
-          // The write did not land: don't claim a self-save, and let a future
-          // reload through rather than swallowing it.
-          pendingUnsaved = true;
-          suppressReload = false;
+          showConflict(
+            r.status === 409
+              ? "This page changed on disk since you started editing."
+              : "Saving failed (HTTP " + r.status + ")."
+          );
         }
       })
       .catch(function () {
@@ -800,14 +802,14 @@
     return false;
   };
 
-  function showConflict() {
+  function showConflict(why) {
     if (document.querySelector(".edit-conflict")) return;
     var banner = document.createElement("div");
     banner.className = "edit-conflict";
     banner.setAttribute("role", "alert");
     banner.appendChild(
       document.createTextNode(
-        "This page changed on disk since you started editing. Your edit is still here but was not saved — copy it, then reload. "
+        why + " Your edit is still here but was not saved — copy it, then reload. "
       )
     );
     var reload = document.createElement("button");
