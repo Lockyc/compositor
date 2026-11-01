@@ -17,7 +17,8 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     }
 
     // Every content error (a strict-policy dead link or image) surfaces here, before
-    // anything is deleted, so a failed build leaves the last good site in place.
+    // anything is written; an IO error later fails in staging (`swap_into_place`).
+    // Either way a failed build leaves the last good site in place.
     let mut site = build_site(&docs, policy, &excluder, false)?;
     // The two pages compositor renders from outside the docs tree resolve their
     // images against the repo root; `images` records what must be copied.
@@ -30,22 +31,96 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let order = crate::render_page::reading_order(&site.nav, home.as_ref());
 
     ensure_build_output(&out)?;
-    let _ = std::fs::remove_dir_all(&out);
-    std::fs::create_dir_all(&out)?;
-    for page in site.pages.iter().chain(home.as_ref()) {
-        let (prev, next) = crate::render_page::neighbours(&order, &page.url);
-        let html = render_page(&cfg, &site.nav, page, prev, next);
-        let dest = out.join(&page.url);
-        if let Some(parent) = dest.parent() {
-            std::fs::create_dir_all(parent)?;
+    let staging = sibling(&out, &format!("tmp-{}", std::process::id()));
+    remove_if_present(&staging)?;
+    let written = (|| -> Result<()> {
+        std::fs::create_dir_all(&staging)
+            .with_context(|| format!("creating {}", staging.display()))?;
+        for page in site.pages.iter().chain(home.as_ref()) {
+            let (prev, next) = crate::render_page::neighbours(&order, &page.url);
+            let html = render_page(&cfg, &site.nav, page, prev, next);
+            let dest = staging.join(&page.url);
+            if let Some(parent) = dest.parent() {
+                std::fs::create_dir_all(parent)?;
+            }
+            std::fs::write(&dest, html)?;
         }
-        std::fs::write(&dest, html)?;
+        copy_assets(&docs, &out, &staging, &excluder)?;
+        copy_root_assets(&staging, &images.copies())?;
+        write_shell_assets(&staging)?;
+        swap_into_place(&staging, &out)
+    })();
+    if written.is_err() {
+        let _ = std::fs::remove_dir_all(&staging);
     }
-    copy_assets(&docs, &out, &excluder)?;
-    copy_root_assets(&out, &images.copies())?;
-    write_shell_assets(&out)?;
+    written?;
 
     println!("built {} pages -> {}", site.pages.len(), out.display());
+    Ok(())
+}
+
+/// `<out>.<suffix>`, beside `out` — the same filesystem, so a rename swaps it.
+fn sibling(out: &Path, suffix: &str) -> PathBuf {
+    let mut name = out.file_name().unwrap_or_default().to_owned();
+    name.push(format!(".{suffix}"));
+    out.with_file_name(name)
+}
+
+/// True for `out` and for any `<out>.tmp-*` build scratch beside it, including one
+/// a killed build left behind. In a bare folder `out` sits inside the docs dir, so
+/// the asset walk must skip all of them or it copies a site into itself.
+fn is_build_output(path: &Path, out: &Path) -> bool {
+    if path.starts_with(out) {
+        return true;
+    }
+    let (Some(parent), Some(stem)) = (out.parent(), out.file_name()) else {
+        return false;
+    };
+    let mut prefix = stem.to_owned();
+    prefix.push(".tmp-");
+    let prefix = prefix.to_string_lossy().into_owned();
+    path.strip_prefix(parent)
+        .ok()
+        .and_then(|rel| rel.components().next())
+        .and_then(|first| first.as_os_str().to_str())
+        .is_some_and(|first| first.starts_with(&prefix))
+}
+
+fn remove_if_present(dir: &Path) -> Result<()> {
+    match std::fs::remove_dir_all(dir) {
+        Err(e) if e.kind() != std::io::ErrorKind::NotFound => {
+            Err(e).with_context(|| format!("removing {}", dir.display()))
+        }
+        _ => Ok(()),
+    }
+}
+
+/// Replace `out` with the fully-written `staging` by two renames, so `out` is only
+/// ever the previous site or the new one, never a partial one. The previous site
+/// is moved aside before it is deleted: a delete that fails partway then leaves
+/// debris beside `out`, never stale pages inside it.
+fn swap_into_place(staging: &Path, out: &Path) -> Result<()> {
+    let old = sibling(staging, "old");
+    remove_if_present(&old)?;
+    let had_old = match std::fs::rename(out, &old) {
+        Ok(()) => true,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => false,
+        Err(e) => return Err(e).with_context(|| format!("moving aside {}", out.display())),
+    };
+    if let Err(e) = std::fs::rename(staging, out) {
+        if had_old {
+            let _ = std::fs::rename(&old, out);
+        }
+        return Err(e).with_context(|| format!("moving the new build into {}", out.display()));
+    }
+    if had_old {
+        if let Err(e) = std::fs::remove_dir_all(&old) {
+            eprintln!(
+                "warning: could not remove the previous build {}: {e}",
+                old.display()
+            );
+        }
+    }
     Ok(())
 }
 
@@ -135,18 +210,17 @@ fn canonical_lenient(path: &Path) -> PathBuf {
     }
 }
 
-/// Mirror every non-Markdown file in `docs` into `out`, preserving relative
-/// paths. Markdown is rendered to HTML elsewhere; everything else (images,
-/// downloads, data files a page links to) is copied verbatim so those
-/// references resolve in the built site — matching MkDocs, which copies all
-/// non-doc files from the docs dir into the output.
-fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
-    // Skip the output tree: when the docs dir *is* the project dir (a bare
-    // Markdown folder with no config), `out` sits inside `docs`, so without
-    // this the walk would copy the freshly-written site back into itself.
+/// Mirror every non-Markdown file in `docs` into `dest_root` (the staging dir of
+/// the build whose final home is `out`), preserving relative paths. Markdown is
+/// rendered to HTML elsewhere; everything else (images, downloads, data files a
+/// page links to) is copied verbatim so those references resolve in the built
+/// site — matching MkDocs, which copies all non-doc files from the docs dir into
+/// the output.
+fn copy_assets(docs: &Path, out: &Path, dest_root: &Path, excluder: &Excluder) -> Result<()> {
+    // Skip the output tree and its staging siblings (`is_build_output`).
     // Excluded directories are pruned rather than walked file by file.
     for entry in WalkDir::new(docs).into_iter().filter_entry(|e| {
-        !e.path().starts_with(out)
+        !is_build_output(e.path(), out)
             && (e.depth() == 0
                 || !e.file_type().is_dir()
                 || e.path()
@@ -165,7 +239,7 @@ fn copy_assets(docs: &Path, out: &Path, excluder: &Excluder) -> Result<()> {
         if excluder.is_excluded(rel) {
             continue;
         }
-        let dest = out.join(rel);
+        let dest = dest_root.join(rel);
         if let Some(parent) = dest.parent() {
             std::fs::create_dir_all(parent)?;
         }
@@ -531,8 +605,8 @@ mod tests {
     }
     #[test]
     fn out_dir_equal_to_docs_dir_is_refused_and_sources_survive() {
-        // `remove_dir_all(out)` runs before rendering, so `out_dir == docs_dir`
-        // would wipe every source file the build is about to read.
+        // A build replaces `out` wholesale, so `out_dir == docs_dir` would
+        // discard every source file.
         let tmp = scratch("out-eq-docs");
         std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
         std::fs::write(
@@ -601,6 +675,84 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
         std::fs::remove_dir_all(&elsewhere).ok();
     }
+
+    #[cfg(unix)]
+    #[test]
+    fn io_failure_mid_build_leaves_the_previous_site_intact() {
+        use std::os::unix::fs::PermissionsExt;
+        let tmp = scratch("io-fail");
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(tmp.join("docs/old.md"), "# Old\n").unwrap();
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        // Pages render, then the asset copy hits a file it cannot read.
+        let locked = tmp.join("docs/locked.png");
+        std::fs::write(&locked, "PNG").unwrap();
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o000)).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Changed\n").unwrap();
+        let result = run_build(&tmp, LinkPolicy::Strict);
+        std::fs::set_permissions(&locked, std::fs::Permissions::from_mode(0o644)).unwrap();
+
+        assert!(result.is_err(), "an unreadable asset must fail the build");
+        let home = std::fs::read_to_string(tmp.join("site/index.html")).unwrap();
+        assert!(home.contains("Home"), "previous home survives: {home}");
+        assert!(tmp.join("site/old.html").exists(), "previous pages survive");
+        assert!(tmp.join("site").join(crate::assets::CSS_URL).is_file());
+        let leftovers: Vec<_> = std::fs::read_dir(&tmp)
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .filter(|e| e.file_name().to_string_lossy().starts_with("site."))
+            .collect();
+        assert!(leftovers.is_empty(), "staging cleaned up: {leftovers:?}");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn rebuild_drops_a_deleted_page() {
+        let tmp = scratch("rebuild-drop");
+        std::fs::write(tmp.join("docs/index.md"), "# Home\n").unwrap();
+        std::fs::write(tmp.join("docs/gone.md"), "# Gone\n").unwrap();
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+        assert!(tmp.join("site/gone.html").exists());
+
+        std::fs::remove_file(tmp.join("docs/gone.md")).unwrap();
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        assert!(tmp.join("site/index.html").exists());
+        assert!(
+            !tmp.join("site/gone.html").exists(),
+            "a deleted page must not survive a rebuild"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn bare_folder_build_skips_leftover_staging_dirs() {
+        // A killed build leaves `site.tmp-<pid>` inside a bare folder's docs dir.
+        let tmp = std::env::temp_dir().join(format!(
+            "compositor-build-bare-stage-{}",
+            std::process::id()
+        ));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("site.tmp-1")).unwrap();
+        std::fs::write(tmp.join("site.tmp-1/debris.png"), "PNG").unwrap();
+        std::fs::write(tmp.join("index.md"), "# Home\n").unwrap();
+
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+        run_build(&tmp, LinkPolicy::Strict).unwrap();
+
+        assert!(tmp.join("site/index.html").exists());
+        assert!(
+            !tmp.join("site/site.tmp-1").exists(),
+            "staging debris not copied"
+        );
+        assert!(
+            !tmp.join("site/site").exists(),
+            "previous site not copied in"
+        );
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
     #[test]
     fn bare_folder_build_never_publishes_the_git_dir() {
         // No `docs/` subdir: the docs dir is the repo root, so the asset walk
