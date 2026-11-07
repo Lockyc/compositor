@@ -23,7 +23,8 @@ in-place editor: click a paragraph, heading, list, table, or code block and edit
 as rendered — changes autosave to the source `.md` and live-reload swaps the result
 back in. If the file changes on disk while you're editing (another editor, an agent, a
 checkout), the save is refused instead of overwriting it: your edit stays on screen with a
-banner to copy it and reload. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
+banner to copy it and reload. Any other refused save (the page is no longer editable, or
+the write failed) stops autosaving the same way and says why; only a dropped connection retries. Only the blocks you touch are rewritten; admonitions, code, and frontmatter
 around them stay byte-for-byte. It's off on any non-loopback bind
 (`serve --host 0.0.0.0`) and never present in `build` output.
 
@@ -97,7 +98,9 @@ list of docs-dir-relative path prefixes (e.g. `["superpowers/"]`) for a director
 you keep in git but don't publish. Both apply. The rendered site lands in
 `out_dir`, which must not be, or contain, the project or docs dir. An existing
 `out_dir` must be empty or a previous compositor build — `build` refuses to replace
-anything else — and a failed build leaves the previous site in place. Nothing under
+anything else — and a failed build leaves the previous site in place (`build` stages
+beside `out_dir`, so it needs write access to `out_dir`'s parent). A symlinked file is
+published only when its target is inside the repo. Nothing under
 `.git` is ever published or served.
 
 By default `build` is strict: an unresolvable internal link — or an image whose
