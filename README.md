@@ -1,8 +1,8 @@
 # compositor
 
 A Rust static-site generator for Markdown doc repos: point it at a directory of
-Markdown and get a themed, navigable static site. A drop-in replacement for MkDocs,
-with its render engine (`render-core`) also usable as a library.
+Markdown and get a themed, navigable static site. An MkDocs replacement that needs
+no `mkdocs.yml`, with its render engine (`render-core`) also usable as a library.
 
 [![Release](https://img.shields.io/github/v/release/Lockyc/compositor?sort=semver&label=release)](https://github.com/Lockyc/compositor/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-555)
