@@ -1,19 +1,19 @@
-name    = "compositor"
+name = "compositor"
 summary = "A Rust static-site generator for Markdown doc repos — a from-scratch MkDocs replacement (reusable render engine + CLI)"
-kind    = "tool"
-status  = "active"
-tags    = ["docs", "static-site-generator", "markdown", "mkdocs-replacement", "rust", "cli"]
-stack   = ["rust", "comrak", "syntect", "askama"]
+status = "active"
+tags = ["docs", "static-site-generator", "markdown", "mkdocs-replacement", "rust", "cli"]
 
 [[provides]]
-name    = "compositor build"
+name = "compositor build"
 summary = "Renders a Markdown docs directory into a themed, tree-navigated static HTML site; a drop-in replacement for `mkdocs build`"
-url     = "https://github.com/Lockyc/compositor"
-
+url = "https://github.com/Lockyc/compositor"
 [[provides]]
-name    = "render-core"
+name = "render-core"
 summary = "Reusable Rust library: Markdown → in-memory site model (frontmatter/title resolution, comrak+syntect render, tree nav, .md→.html link rewrite)"
-
 [[provides]]
-name    = "serve-handle"
+name = "serve-handle"
 summary = "Embedding API: serve_handle() runs a doc repo's live-reloading site on a loopback port and returns once bound, for host apps supervising many sites in one process. The non-blocking counterpart to run_serve, sharing its setup path."
+
+[github]
+description = "A Rust static-site generator for Markdown doc repos — a from-scratch MkDocs replacement (reusable render engine + CLI)"
+topics = ["askama", "cli", "comrak", "docs", "markdown", "rust", "static-site-generator", "syntect", "mkdocs-replacement"]
