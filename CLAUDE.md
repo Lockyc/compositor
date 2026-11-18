@@ -355,7 +355,7 @@ release.yml -f tag=v<version>`.
   default (an unresolvable internal link fails the build); `--lenient` publishes
   anyway, rendering broken links as honest 404s, for unattended pipelines.
 - Serve (live-reload): `cargo run -p compositor -- serve --dir <project>` (`--host`; `--port` omitted → OS picks a free port, printed on start; `--open`)
-- Gate: `just gate`, the only check — run before work is called done (fmt-check + clippy + cargo tests + the Node `editor.js` harness, `crates/compositor/tests/editor.test.cjs`)
+- Gate: `just gate`, the only check — run before work is called done (fmt-check + clippy + cargo tests + the Node `editor.js` harness, `crates/compositor/tests/*.test.cjs`; its reconstruction tests read the `editor_fixture` test's committed corpus, regenerated with `COMPOSITOR_UPDATE_FIXTURES=1 cargo test --test editor_fixture` when rendering changes)
 
 ## Toolchain
 

@@ -19,9 +19,14 @@ run *args:
 
 # Run the test suite (cargo + the Node editor.js harness)
 [group("check")]
-test:
+test: _node-deps
     cargo test
     node --test 'crates/compositor/tests/*.test.cjs'
+
+# Install the Node harness's pinned DOM library when the lockfile is newer
+[private]
+_node-deps:
+    @[ node_modules/.package-lock.json -nt package-lock.json ] || npm ci --no-audit --no-fund --silent
 
 # Compile without producing binaries
 [group("check")]
@@ -40,7 +45,7 @@ lint:
 
 # Non-mutating pre-merge gate: fmt check + clippy + tests
 [group("check")]
-gate:
+gate: _node-deps
     #!/usr/bin/env bash
     set -euo pipefail
     cargo fmt --check

@@ -1,0 +1,8 @@
+{
+  "name": "compositor-editor-harness",
+  "private": true,
+  "description": "Node test dependencies for crates/compositor/tests/*.test.cjs",
+  "devDependencies": {
+    "linkedom": "0.18.14"
+  }
+}

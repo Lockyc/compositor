@@ -59,8 +59,6 @@
   };
 
   // --- Pure helpers -------------------------------------------------------
-  // Kept small and dependency-free so a later Node smoke test can import
-  // them directly if a JS harness is ever added (see CLAUDE.md/FOLLOWUPS).
 
   // Reads `data-sourcepos` ("startLine:startCol-endLine:endCol", 1-based,
   // preprocessed-body coordinates) off a rendered block. Returns null if the
@@ -564,11 +562,18 @@
         trailerStart--;
       }
       var trailer = original.slice(trailerStart);
+      // Serialized lines take the line ending of the span they replace, so an
+      // edit in a CRLF file never leaves it with mixed endings.
+      var eol = /\r$/.test(original[0] || "") ? "\r" : "";
       // A region that serializes to nothing (every block deleted/emptied)
       // removes its source lines entirely -- trailer and all -- rather than
       // stranding orphan blank lines: splice with no inserts.
       var replacement = ed.text.length
-        ? splitLines(ed.text).concat(trailer)
+        ? splitLines(ed.text)
+            .map(function (line) {
+              return line.replace(/\r$/, "") + eol;
+            })
+            .concat(trailer)
         : [];
       lines.splice(ed.a - 1, count, ...replacement);
     }
