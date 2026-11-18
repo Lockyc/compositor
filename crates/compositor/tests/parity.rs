@@ -228,11 +228,19 @@ fn html_unescape(s: &str) -> String {
         .replace("&amp;", "&")
 }
 
-/// The href the nav gives the page titled `title`.
+/// The href of the link whose text is `title` (a nav entry or a wikilink).
 fn nav_href(html: &str, title: &str) -> Option<String> {
     let close = format!("\">{title}</a>");
     let end = html.find(&close)?;
     let start = html[..end].rfind("href=\"")? + "href=\"".len();
+    Some(html_unescape(&html[start..end]))
+}
+
+/// The href of the pager link with class `class` (`page-nav-prev`/`-next`).
+fn pager_href(html: &str, class: &str) -> Option<String> {
+    let open = format!("{class}\" href=\"");
+    let start = html.find(&open)? + open.len();
+    let end = start + html[start..].find('"')?;
     Some(html_unescape(&html[start..end]))
 }
 
@@ -244,8 +252,9 @@ mod names {
     proptest! {
         #![proptest_config(ProptestConfig::with_cases(24))]
 
-        /// For page names carrying spaces, non-ASCII, `%`, `#` and `?`, the nav
-        /// href, the file `build` writes and serve's 200 all name the same page.
+        /// For page names carrying spaces, non-ASCII, `%`, `#` and `?`, the nav,
+        /// pager and wikilink hrefs, the file `build` writes and serve's 200 all
+        /// name the same page.
         #[test]
         fn rendered_href_build_file_and_serve_line_up(
             raw in prop::collection::vec("[a-zA-Z0-9 é中%#?_-]{1,8}", 1..5)
@@ -263,18 +272,47 @@ mod names {
             for (i, n) in names.iter().enumerate() {
                 write(&proj, &format!("{n}.md"), &format!("# Page{i}\n"));
             }
+            // A home page wikilinking every page whose name a wikilink can
+            // spell (`#` starts its fragment).
+            let wikilinks: String = names
+                .iter()
+                .enumerate()
+                .filter(|(_, n)| !n.contains('#'))
+                .map(|(i, n)| format!("[[{n}|Wiki{i}]]\n\n"))
+                .collect();
+            write(&proj, "index.md", &format!("# Home\n\n{wikilinks}"));
             run_build(&proj, LinkPolicy::Lenient).unwrap();
             let index = fs::read_to_string(proj.join("site/index.html")).unwrap();
             let handle = serve_handle_with(&proj, false).unwrap();
             for (i, n) in names.iter().enumerate() {
                 let file = format!("{n}.html");
                 prop_assert!(proj.join("site").join(&file).is_file(), "build wrote {}", file);
+                let mut hrefs = Vec::new();
                 let href = nav_href(&index, &format!("Page{i}"));
                 prop_assert!(href.is_some(), "nav links Page{} ({})", i, n);
-                let href = href.unwrap();
-                let (target, got) = follow(handle.port, &href);
-                prop_assert_eq!(&target, &file, "href {:?} names another file", href);
-                prop_assert_eq!(got, 200, "serve answered {} for href {:?}", got, href);
+                hrefs.push(href.unwrap());
+                if !n.contains('#') {
+                    let href = nav_href(&index, &format!("Wiki{i}"));
+                    prop_assert!(href.is_some(), "home wikilinks Wiki{} ({})", i, n);
+                    hrefs.push(href.unwrap());
+                }
+                for href in hrefs {
+                    let (target, got) = follow(handle.port, &href);
+                    prop_assert_eq!(&target, &file, "href {:?} names another file", href);
+                    prop_assert_eq!(got, 200, "serve answered {} for href {:?}", got, href);
+                }
+                // Every page's pager links name a built page serve answers.
+                let html = fs::read_to_string(proj.join("site").join(&file)).unwrap();
+                for class in ["page-nav-prev", "page-nav-next"] {
+                    if let Some(href) = pager_href(&html, class) {
+                        let (target, got) = follow(handle.port, &href);
+                        prop_assert!(
+                            proj.join("site").join(&target).is_file(),
+                            "{} {} href {:?} names no built file", file, class, href
+                        );
+                        prop_assert_eq!(got, 200, "serve answered {} for href {:?}", got, href);
+                    }
+                }
             }
             handle.shutdown();
             fs::remove_dir_all(&proj).ok();
