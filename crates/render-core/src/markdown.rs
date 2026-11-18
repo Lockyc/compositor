@@ -132,6 +132,9 @@ fn render_inner(
     // plan each wikilink's replacement. We defer tree surgery (detach/append) to a
     // second pass so we never mutate structure while iterating descendants.
     let mut wl_actions: Vec<(&AstNode, WikiAction)> = Vec::new();
+    // Edit mode only: the Markdown each rewritten link was written as, for the
+    // editor to write back (see `wikilink_marker`).
+    let mut markers: Vec<(&AstNode, String)> = Vec::new();
     for node in root.descendants() {
         enum Kind {
             Link(Option<String>),
@@ -169,6 +172,15 @@ fn render_inner(
             Kind::Link(Some(new_url)) => {
                 let mut data = node.data.borrow_mut();
                 if let NodeValue::Link(ref mut link) = data.value {
+                    if sourcepos {
+                        markers.push((
+                            node,
+                            format!(
+                                r#"<span data-md-href="{}"></span>"#,
+                                crate::admonitions::html_escape(&link.url)
+                            ),
+                        ));
+                    }
                     link.url = new_url;
                 }
             }
@@ -186,7 +198,15 @@ fn render_inner(
                     _ => {}
                 }
             }
-            Kind::Wiki(action) => wl_actions.push((node, action)),
+            Kind::Wiki(action) => {
+                if sourcepos {
+                    let rendered = match &action {
+                        WikiAction::Link { text, .. } | WikiAction::Dead { text } => text,
+                    };
+                    markers.push((node, wikilink_marker(node, rendered)));
+                }
+                wl_actions.push((node, action))
+            }
             _ => {}
         }
     }
@@ -204,6 +224,11 @@ fn render_inner(
         .cloned()
         .collect();
     let heading_ids = HeadingIds::new(headings.into_iter().map(|h| h.id).collect());
+
+    // After ids and titles are read from the tree, so the markers never reach them.
+    for (node, marker) in markers {
+        node.prepend(arena.alloc(NodeValue::HtmlInline(marker).into()));
+    }
 
     let adapter = SyntectAdapter::new(Some("InspiredGitHub"));
     let mut plugins = Plugins::default();
@@ -528,6 +553,31 @@ fn plan_wikilink(
             }),
         },
     }
+}
+
+/// The edit-mode marker a rendered link carries as its first child: an empty
+/// `<span>` holding the Markdown the link was written as, which the rendered
+/// `<a>` no longer shows (a `.md` link's href is rewritten to `.html`; a
+/// `[[wikilink]]` becomes a plain link). `editor.js` writes that source back
+/// for an unchanged link instead of serializing the rendered one. For a
+/// wikilink, `data-md-text` is the text it rendered with, so the editor can
+/// tell when the link text itself was edited.
+fn wikilink_marker<'a>(node: &'a AstNode<'a>, rendered: &str) -> String {
+    let NodeValue::WikiLink(wl) = &node.data.borrow().value else {
+        return String::new();
+    };
+    let label = text_of(node);
+    let source = if label == wl.url {
+        format!("[[{}]]", wl.url)
+    } else {
+        format!("[[{}|{label}]]", wl.url)
+    };
+    format!(
+        r#"<span data-md-wikilink="{}" data-md-target="{}" data-md-text="{}"></span>"#,
+        crate::admonitions::html_escape(&source),
+        crate::admonitions::html_escape(&wl.url),
+        crate::admonitions::html_escape(rendered),
+    )
 }
 
 /// Apply a planned wikilink action: replace the node's children with a single
@@ -1095,6 +1145,40 @@ mod tests {
             "got: {}",
             r.html
         );
+    }
+
+    #[test]
+    fn link_source_markers_ride_only_in_edit_mode() {
+        let md = "[a](getting-started.md) and [[getting-started]]\n";
+        let known: HashSet<String> = ["getting-started.html".to_string()].into();
+        let (edit, _) = render_markdown_editable(
+            md,
+            Path::new(""),
+            &known,
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .unwrap();
+        let html = edit.html;
+        assert!(
+            html.contains(r#"<a href="getting-started.html"><span data-md-href="getting-started.md"></span>a</a>"#),
+            "{html}"
+        );
+        assert!(
+            html.contains(r#"<span data-md-wikilink="[[getting-started]]" data-md-target="getting-started" data-md-text="Getting Started"></span>Getting Started</a>"#),
+            "{html}"
+        );
+        let build = render_markdown(
+            md,
+            Path::new(""),
+            &known,
+            &wiki_fixture(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .unwrap();
+        assert!(!build.html.contains("data-md-"), "build output stays clean");
     }
 
     #[test]

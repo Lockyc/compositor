@@ -21,7 +21,9 @@ aliases:
 
 # Corpus
 
-Intro with **bold**, *em*, `code` and ~~struck~~ text.
+Intro with **bold**, *em*, `code`, [a link](other.md), ~~struck~~ and a [[Other]] wikilink.
+
+See [[other|the other page]], [[Missing]] and [a section](other.md#top).
 
 !!! note \"Heads up\"
     An admonition body.

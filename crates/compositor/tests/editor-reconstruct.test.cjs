@@ -98,4 +98,18 @@ for (const entry of CORPUS) {
     assert.ok(after.slice(a - 1, b).join("\n").includes("Edited."), "the edit landed");
     assert.ok(document.getElementById("doc"));
   });
+
+  test(`${entry.name}: editing a wikilink's text keeps it a wikilink to the same target`, () => {
+    const { window, blocks } = load(entry);
+    const para = blocks.find((el) => el.textContent.startsWith("See "));
+    assert.ok(para, "corpus paragraph with the piped wikilink");
+    const link = Array.from(para.querySelectorAll("a")).find(
+      (a) => a.textContent === "the other page",
+    );
+    link.lastChild.nodeValue = "that page";
+    assert.match(
+      window.__compositorEditor.serializeBlock(para),
+      /^See \[\[other\|that page\]\], \[\[Missing\]\] and \[a section\]\(other\.md#top\)\.$/,
+    );
+  });
 }

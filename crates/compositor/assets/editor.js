@@ -218,10 +218,22 @@
           // Inline code is literal -- no nested mark parsing inside it.
           out += "`" + n.textContent + "`";
         } else if (tag === "A") {
+          // The link as it was written, when rendering rewrote it: render-core's
+          // edit-mode marker span (`wikilink_marker`), first child of the <a>.
+          var mark = n.firstChild && n.firstChild.nodeType === 1 ? n.firstChild : null;
+          var text = serializeInline(n);
+          if (mark && mark.hasAttribute("data-md-wikilink")) {
+            out +=
+              text === mark.getAttribute("data-md-text")
+                ? mark.getAttribute("data-md-wikilink")
+                : "[[" + mark.getAttribute("data-md-target") + "|" + text + "]]";
+            continue;
+          }
           // getAttribute, not `.href`, to keep the author's relative URL
           // rather than the browser-resolved absolute one.
-          var href = n.getAttribute("href") || "";
-          out += "[" + serializeInline(n) + "](" + href + ")";
+          var href =
+            (mark && mark.getAttribute("data-md-href")) || n.getAttribute("href") || "";
+          out += "[" + text + "](" + href + ")";
         } else if (tag === "IMG") {
           // An <img> has no children -- serialize its attributes directly, the
           // mirror of the A case. getAttribute keeps whatever src the DOM holds

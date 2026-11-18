@@ -1,6 +1,6 @@
 [
   {
-    "doc": "<article id=\"doc\" role=\"document\"><h1 data-sourcepos=\"2:1-2:8\"><a href=\"#corpus\" aria-hidden=\"true\" class=\"anchor\" id=\"corpus\"></a>Corpus</h1>\n<p data-sourcepos=\"4:1-4:54\">Intro with <strong>bold</strong>, <em>em</em>, <code>code</code> and <del>struck</del> text.</p>\n<div class=\"admonition note\">\n<p class=\"admonition-title\">Heads up</p>\n<p data-sourcepos=\"9:1-9:19\">An admonition body.</p>\n</div>\n<pre data-sourcepos=\"13:1-15:3\" style=\"background-color:#ffffff;\"><code class=\"language-rust\"><span style=\"font-weight:bold;color:#a71d5d;\">fn </span><span style=\"font-weight:bold;color:#795da3;\">main</span><span style=\"color:#323232;\">() {}\n</span></code></pre>\n<ul data-sourcepos=\"17:1-19:0\">\n<li data-sourcepos=\"17:1-17:15\"><input type=\"checkbox\" checked=\"\" disabled=\"\" /> done task</li>\n<li data-sourcepos=\"18:1-19:0\"><input type=\"checkbox\" disabled=\"\" /> open task</li>\n</ul>\n<p data-sourcepos=\"20:1-20:46\">A paragraph after a list, past its blank line.</p>\n<table data-sourcepos=\"22:1-24:13\">\n<thead>\n<tr data-sourcepos=\"22:1-22:25\">\n<th data-sourcepos=\"22:2-22:7\" align=\"left\">Left</th>\n<th data-sourcepos=\"22:9-22:16\" align=\"center\">Centre</th>\n<th data-sourcepos=\"22:18-22:24\" align=\"right\">Right</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"24:1-24:13\">\n<td data-sourcepos=\"24:2-24:4\" align=\"left\">a</td>\n<td data-sourcepos=\"24:6-24:8\" align=\"center\">b</td>\n<td data-sourcepos=\"24:10-24:12\" align=\"right\">c</td>\n</tr>\n</tbody>\n</table>\n<p data-sourcepos=\"26:1-26:21\"><img src=\"img/logo.png\" alt=\"logo\" /></p>\n<h2 data-sourcepos=\"28:1-28:30\"><a href=\"#custom-id\" aria-hidden=\"true\" class=\"anchor\" id=\"custom-id\"></a>Custom heading</h2>\n<blockquote data-sourcepos=\"30:1-31:17\">\n<p data-sourcepos=\"30:3-31:17\">A quote\nover two lines.</p>\n</blockquote>\n<ol data-sourcepos=\"33:1-34:6\">\n<li data-sourcepos=\"33:1-33:6\">one</li>\n<li data-sourcepos=\"34:1-34:6\">two</li>\n</ol>\n<ul data-sourcepos=\"35:1-37:0\">\n<li data-sourcepos=\"35:1-35:7\">plain</li>\n<li data-sourcepos=\"36:1-37:0\">bullets</li>\n</ul>\n<p data-sourcepos=\"38:1-38:15\">Last paragraph.</p>\n\n      <nav class=\"page-nav\" aria-label=\"Previous and next page\">\n        <a class=\"page-nav-link page-nav-prev\" href=\"index.html\"><span class=\"page-nav-dir\">← Previous</span><span class=\"page-nav-title\">Fixture</span></a>\n        <a class=\"page-nav-link page-nav-next\" href=\"crlf.html\"><span class=\"page-nav-dir\">Next →</span><span class=\"page-nav-title\">Corpus</span></a>\n      </nav></article>",
+    "doc": "<article id=\"doc\" role=\"document\"><h1 data-sourcepos=\"2:1-2:8\"><a href=\"#corpus\" aria-hidden=\"true\" class=\"anchor\" id=\"corpus\"></a>Corpus</h1>\n<p data-sourcepos=\"4:1-4:91\">Intro with <strong>bold</strong>, <em>em</em>, <code>code</code>, <a href=\"other.html\"><span data-md-href=\"other.md\"></span>a link</a>, <del>struck</del> and a <a href=\"other.html\"><span data-md-wikilink=\"[[Other]]\" data-md-target=\"Other\" data-md-text=\"Other\"></span>Other</a> wikilink.</p>\n<p data-sourcepos=\"6:1-6:72\">See <a href=\"other.html\"><span data-md-wikilink=\"[[other|the other page]]\" data-md-target=\"other\" data-md-text=\"the other page\"></span>the other page</a>, <a href=\"\" data-wikilink=\"true\"><span data-md-wikilink=\"[[Missing]]\" data-md-target=\"Missing\" data-md-text=\"Missing\"></span>Missing</a> and <a href=\"other.html#top\"><span data-md-href=\"other.md#top\"></span>a section</a>.</p>\n<div class=\"admonition note\">\n<p class=\"admonition-title\">Heads up</p>\n<p data-sourcepos=\"11:1-11:19\">An admonition body.</p>\n</div>\n<pre data-sourcepos=\"15:1-17:3\" style=\"background-color:#ffffff;\"><code class=\"language-rust\"><span style=\"font-weight:bold;color:#a71d5d;\">fn </span><span style=\"font-weight:bold;color:#795da3;\">main</span><span style=\"color:#323232;\">() {}\n</span></code></pre>\n<ul data-sourcepos=\"19:1-21:0\">\n<li data-sourcepos=\"19:1-19:15\"><input type=\"checkbox\" checked=\"\" disabled=\"\" /> done task</li>\n<li data-sourcepos=\"20:1-21:0\"><input type=\"checkbox\" disabled=\"\" /> open task</li>\n</ul>\n<p data-sourcepos=\"22:1-22:46\">A paragraph after a list, past its blank line.</p>\n<table data-sourcepos=\"24:1-26:13\">\n<thead>\n<tr data-sourcepos=\"24:1-24:25\">\n<th data-sourcepos=\"24:2-24:7\" align=\"left\">Left</th>\n<th data-sourcepos=\"24:9-24:16\" align=\"center\">Centre</th>\n<th data-sourcepos=\"24:18-24:24\" align=\"right\">Right</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"26:1-26:13\">\n<td data-sourcepos=\"26:2-26:4\" align=\"left\">a</td>\n<td data-sourcepos=\"26:6-26:8\" align=\"center\">b</td>\n<td data-sourcepos=\"26:10-26:12\" align=\"right\">c</td>\n</tr>\n</tbody>\n</table>\n<p data-sourcepos=\"28:1-28:21\"><img src=\"img/logo.png\" alt=\"logo\" /></p>\n<h2 data-sourcepos=\"30:1-30:30\"><a href=\"#custom-id\" aria-hidden=\"true\" class=\"anchor\" id=\"custom-id\"></a>Custom heading</h2>\n<blockquote data-sourcepos=\"32:1-33:17\">\n<p data-sourcepos=\"32:3-33:17\">A quote\nover two lines.</p>\n</blockquote>\n<ol data-sourcepos=\"35:1-36:6\">\n<li data-sourcepos=\"35:1-35:6\">one</li>\n<li data-sourcepos=\"36:1-36:6\">two</li>\n</ol>\n<ul data-sourcepos=\"37:1-39:0\">\n<li data-sourcepos=\"37:1-37:7\">plain</li>\n<li data-sourcepos=\"38:1-39:0\">bullets</li>\n</ul>\n<p data-sourcepos=\"40:1-40:15\">Last paragraph.</p>\n\n      <nav class=\"page-nav\" aria-label=\"Previous and next page\">\n        <a class=\"page-nav-link page-nav-prev\" href=\"index.html\"><span class=\"page-nav-dir\">← Previous</span><span class=\"page-nav-title\">Fixture</span></a>\n        <a class=\"page-nav-link page-nav-next\" href=\"crlf.html\"><span class=\"page-nav-dir\">Next →</span><span class=\"page-nav-title\">Corpus</span></a>\n      </nav></article>",
     "name": "lf",
     "payload": {
       "fmLines": 5,
@@ -10,6 +10,8 @@
         2,
         3,
         4,
+        5,
+        6,
         null,
         null,
         null,
@@ -17,8 +19,6 @@
         null,
         null,
         null,
-        8,
-        9,
         10,
         11,
         12,
@@ -42,14 +42,16 @@
         30,
         31,
         32,
-        33
+        33,
+        34,
+        35
       ],
-      "source": "---\ntitle: Corpus\naliases:\n  - corpus-alias\n---\n\n# Corpus\n\nIntro with **bold**, *em*, `code` and ~~struck~~ text.\n\n!!! note \"Heads up\"\n    An admonition body.\n\n```rust\nfn main() {}\n```\n\n- [x] done task\n- [ ] open task\n\nA paragraph after a list, past its blank line.\n\n| Left | Centre | Right |\n| :-- | :-: | --: |\n| a | b | c |\n\n![logo](img/logo.png)\n\n## Custom heading {#custom-id}\n\n> A quote\n> over two lines.\n\n1. one\n2. two\n- plain\n- bullets\n\nLast paragraph.\n",
+      "source": "---\ntitle: Corpus\naliases:\n  - corpus-alias\n---\n\n# Corpus\n\nIntro with **bold**, *em*, `code`, [a link](other.md), ~~struck~~ and a [[Other]] wikilink.\n\nSee [[other|the other page]], [[Missing]] and [a section](other.md#top).\n\n!!! note \"Heads up\"\n    An admonition body.\n\n```rust\nfn main() {}\n```\n\n- [x] done task\n- [ ] open task\n\nA paragraph after a list, past its blank line.\n\n| Left | Centre | Right |\n| :-- | :-: | --: |\n| a | b | c |\n\n![logo](img/logo.png)\n\n## Custom heading {#custom-id}\n\n> A quote\n> over two lines.\n\n1. one\n2. two\n- plain\n- bullets\n\nLast paragraph.\n",
       "url": "corpus.html"
     }
   },
   {
-    "doc": "<article id=\"doc\" role=\"document\"><h1 data-sourcepos=\"2:1-2:8\"><a href=\"#corpus\" aria-hidden=\"true\" class=\"anchor\" id=\"corpus\"></a>Corpus</h1>\n<p data-sourcepos=\"4:1-4:54\">Intro with <strong>bold</strong>, <em>em</em>, <code>code</code> and <del>struck</del> text.</p>\n<div class=\"admonition note\">\n<p class=\"admonition-title\">Heads up</p>\n<p data-sourcepos=\"9:1-9:19\">An admonition body.</p>\n</div>\n<pre data-sourcepos=\"13:1-15:3\" style=\"background-color:#ffffff;\"><code class=\"language-rust\"><span style=\"font-weight:bold;color:#a71d5d;\">fn </span><span style=\"font-weight:bold;color:#795da3;\">main</span><span style=\"color:#323232;\">() {}\n</span></code></pre>\n<ul data-sourcepos=\"17:1-19:0\">\n<li data-sourcepos=\"17:1-17:15\"><input type=\"checkbox\" checked=\"\" disabled=\"\" /> done task</li>\n<li data-sourcepos=\"18:1-19:0\"><input type=\"checkbox\" disabled=\"\" /> open task</li>\n</ul>\n<p data-sourcepos=\"20:1-20:46\">A paragraph after a list, past its blank line.</p>\n<table data-sourcepos=\"22:1-24:13\">\n<thead>\n<tr data-sourcepos=\"22:1-22:25\">\n<th data-sourcepos=\"22:2-22:7\" align=\"left\">Left</th>\n<th data-sourcepos=\"22:9-22:16\" align=\"center\">Centre</th>\n<th data-sourcepos=\"22:18-22:24\" align=\"right\">Right</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"24:1-24:13\">\n<td data-sourcepos=\"24:2-24:4\" align=\"left\">a</td>\n<td data-sourcepos=\"24:6-24:8\" align=\"center\">b</td>\n<td data-sourcepos=\"24:10-24:12\" align=\"right\">c</td>\n</tr>\n</tbody>\n</table>\n<p data-sourcepos=\"26:1-26:21\"><img src=\"img/logo.png\" alt=\"logo\" /></p>\n<h2 data-sourcepos=\"28:1-28:30\"><a href=\"#custom-id\" aria-hidden=\"true\" class=\"anchor\" id=\"custom-id\"></a>Custom heading</h2>\n<blockquote data-sourcepos=\"30:1-31:17\">\n<p data-sourcepos=\"30:3-31:17\">A quote\nover two lines.</p>\n</blockquote>\n<ol data-sourcepos=\"33:1-34:6\">\n<li data-sourcepos=\"33:1-33:6\">one</li>\n<li data-sourcepos=\"34:1-34:6\">two</li>\n</ol>\n<ul data-sourcepos=\"35:1-37:0\">\n<li data-sourcepos=\"35:1-35:7\">plain</li>\n<li data-sourcepos=\"36:1-37:0\">bullets</li>\n</ul>\n<p data-sourcepos=\"38:1-38:15\">Last paragraph.</p>\n\n      <nav class=\"page-nav\" aria-label=\"Previous and next page\">\n        <a class=\"page-nav-link page-nav-prev\" href=\"corpus.html\"><span class=\"page-nav-dir\">← Previous</span><span class=\"page-nav-title\">Corpus</span></a>\n        <a class=\"page-nav-link page-nav-next\" href=\"other.html\"><span class=\"page-nav-dir\">Next →</span><span class=\"page-nav-title\">Other</span></a>\n      </nav></article>",
+    "doc": "<article id=\"doc\" role=\"document\"><h1 data-sourcepos=\"2:1-2:8\"><a href=\"#corpus\" aria-hidden=\"true\" class=\"anchor\" id=\"corpus\"></a>Corpus</h1>\n<p data-sourcepos=\"4:1-4:91\">Intro with <strong>bold</strong>, <em>em</em>, <code>code</code>, <a href=\"other.html\"><span data-md-href=\"other.md\"></span>a link</a>, <del>struck</del> and a <a href=\"other.html\"><span data-md-wikilink=\"[[Other]]\" data-md-target=\"Other\" data-md-text=\"Other\"></span>Other</a> wikilink.</p>\n<p data-sourcepos=\"6:1-6:72\">See <a href=\"other.html\"><span data-md-wikilink=\"[[other|the other page]]\" data-md-target=\"other\" data-md-text=\"the other page\"></span>the other page</a>, <a href=\"\" data-wikilink=\"true\"><span data-md-wikilink=\"[[Missing]]\" data-md-target=\"Missing\" data-md-text=\"Missing\"></span>Missing</a> and <a href=\"other.html#top\"><span data-md-href=\"other.md#top\"></span>a section</a>.</p>\n<div class=\"admonition note\">\n<p class=\"admonition-title\">Heads up</p>\n<p data-sourcepos=\"11:1-11:19\">An admonition body.</p>\n</div>\n<pre data-sourcepos=\"15:1-17:3\" style=\"background-color:#ffffff;\"><code class=\"language-rust\"><span style=\"font-weight:bold;color:#a71d5d;\">fn </span><span style=\"font-weight:bold;color:#795da3;\">main</span><span style=\"color:#323232;\">() {}\n</span></code></pre>\n<ul data-sourcepos=\"19:1-21:0\">\n<li data-sourcepos=\"19:1-19:15\"><input type=\"checkbox\" checked=\"\" disabled=\"\" /> done task</li>\n<li data-sourcepos=\"20:1-21:0\"><input type=\"checkbox\" disabled=\"\" /> open task</li>\n</ul>\n<p data-sourcepos=\"22:1-22:46\">A paragraph after a list, past its blank line.</p>\n<table data-sourcepos=\"24:1-26:13\">\n<thead>\n<tr data-sourcepos=\"24:1-24:25\">\n<th data-sourcepos=\"24:2-24:7\" align=\"left\">Left</th>\n<th data-sourcepos=\"24:9-24:16\" align=\"center\">Centre</th>\n<th data-sourcepos=\"24:18-24:24\" align=\"right\">Right</th>\n</tr>\n</thead>\n<tbody>\n<tr data-sourcepos=\"26:1-26:13\">\n<td data-sourcepos=\"26:2-26:4\" align=\"left\">a</td>\n<td data-sourcepos=\"26:6-26:8\" align=\"center\">b</td>\n<td data-sourcepos=\"26:10-26:12\" align=\"right\">c</td>\n</tr>\n</tbody>\n</table>\n<p data-sourcepos=\"28:1-28:21\"><img src=\"img/logo.png\" alt=\"logo\" /></p>\n<h2 data-sourcepos=\"30:1-30:30\"><a href=\"#custom-id\" aria-hidden=\"true\" class=\"anchor\" id=\"custom-id\"></a>Custom heading</h2>\n<blockquote data-sourcepos=\"32:1-33:17\">\n<p data-sourcepos=\"32:3-33:17\">A quote\nover two lines.</p>\n</blockquote>\n<ol data-sourcepos=\"35:1-36:6\">\n<li data-sourcepos=\"35:1-35:6\">one</li>\n<li data-sourcepos=\"36:1-36:6\">two</li>\n</ol>\n<ul data-sourcepos=\"37:1-39:0\">\n<li data-sourcepos=\"37:1-37:7\">plain</li>\n<li data-sourcepos=\"38:1-39:0\">bullets</li>\n</ul>\n<p data-sourcepos=\"40:1-40:15\">Last paragraph.</p>\n\n      <nav class=\"page-nav\" aria-label=\"Previous and next page\">\n        <a class=\"page-nav-link page-nav-prev\" href=\"corpus.html\"><span class=\"page-nav-dir\">← Previous</span><span class=\"page-nav-title\">Corpus</span></a>\n        <a class=\"page-nav-link page-nav-next\" href=\"other.html\"><span class=\"page-nav-dir\">Next →</span><span class=\"page-nav-title\">Other</span></a>\n      </nav></article>",
     "name": "crlf",
     "payload": {
       "fmLines": 5,
@@ -59,6 +61,8 @@
         2,
         3,
         4,
+        5,
+        6,
         null,
         null,
         null,
@@ -66,8 +70,6 @@
         null,
         null,
         null,
-        8,
-        9,
         10,
         11,
         12,
@@ -91,9 +93,11 @@
         30,
         31,
         32,
-        33
+        33,
+        34,
+        35
       ],
-      "source": "---\r\ntitle: Corpus\r\naliases:\r\n  - corpus-alias\r\n---\r\n\r\n# Corpus\r\n\r\nIntro with **bold**, *em*, `code` and ~~struck~~ text.\r\n\r\n!!! note \"Heads up\"\r\n    An admonition body.\r\n\r\n```rust\r\nfn main() {}\r\n```\r\n\r\n- [x] done task\r\n- [ ] open task\r\n\r\nA paragraph after a list, past its blank line.\r\n\r\n| Left | Centre | Right |\r\n| :-- | :-: | --: |\r\n| a | b | c |\r\n\r\n![logo](img/logo.png)\r\n\r\n## Custom heading {#custom-id}\r\n\r\n> A quote\r\n> over two lines.\r\n\r\n1. one\r\n2. two\r\n- plain\r\n- bullets\r\n\r\nLast paragraph.\r\n",
+      "source": "---\r\ntitle: Corpus\r\naliases:\r\n  - corpus-alias\r\n---\r\n\r\n# Corpus\r\n\r\nIntro with **bold**, *em*, `code`, [a link](other.md), ~~struck~~ and a [[Other]] wikilink.\r\n\r\nSee [[other|the other page]], [[Missing]] and [a section](other.md#top).\r\n\r\n!!! note \"Heads up\"\r\n    An admonition body.\r\n\r\n```rust\r\nfn main() {}\r\n```\r\n\r\n- [x] done task\r\n- [ ] open task\r\n\r\nA paragraph after a list, past its blank line.\r\n\r\n| Left | Centre | Right |\r\n| :-- | :-: | --: |\r\n| a | b | c |\r\n\r\n![logo](img/logo.png)\r\n\r\n## Custom heading {#custom-id}\r\n\r\n> A quote\r\n> over two lines.\r\n\r\n1. one\r\n2. two\r\n- plain\r\n- bullets\r\n\r\nLast paragraph.\r\n",
       "url": "crlf.html"
     }
   }

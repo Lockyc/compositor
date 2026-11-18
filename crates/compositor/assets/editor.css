@@ -58,8 +58,8 @@ body.editing [contenteditable="true"]:focus {
   background: var(--pico-primary-focus);
 }
 
-/* --- Explicitly non-editable regions (code, admonitions, wikilink-dense
-   blocks — whatever editor.js marks `data-noedit`). Muted + not-allowed so
+/* --- Explicitly non-editable regions (admonitions — whatever editor.js
+   marks `data-noedit`). Muted + not-allowed so
    the block reads as deliberately excluded, not broken. */
 body.editing [data-noedit] {
   cursor: not-allowed;

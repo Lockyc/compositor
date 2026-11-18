@@ -88,7 +88,7 @@ Not bugs that block use — conscious deferrals.
   README/CLAUDE/AGENTS pages, and a docs-root `index.md` served at `/` directly, are
   inline-editable.)
 
-- **Admonitions and wikilink-dense blocks are not inline-editable** (`data-noedit`).
+- **Admonitions are not inline-editable** (`data-noedit`).
   `preprocess_admonitions` rewrites `!!!` blocks *before* comrak parses, so comrak's
   source positions inside an admonition point at the injected `<div>`, not the original
   `!!!` lines — faithful source-mapping there needs the preprocessor taught to carry the

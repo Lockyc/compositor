@@ -167,9 +167,9 @@ bug and "fixed" against the reasoning that deferred it.
     frontmatter offset — is what converts a block's position to a real file line, and any
     admonition-touched block is marked `data-noedit`. (`assets/editor.js`.)
   - **v1 editable scope.** Docs-tree paragraphs/headings/lists/tables/blockquotes edit
-    inline; fenced code edits as raw source; **admonitions and wikilink-dense blocks are
-    read-only** (`data-noedit`) — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) for why each
-    is deferred. A surfaced page is editable whenever it has no *other* editable url to defer
+    inline; fenced code edits as raw source; **admonitions are read-only** (`data-noedit`)
+    — see [`docs/FOLLOWUPS.md`](docs/FOLLOWUPS.md) for why. A link rendering rewrote (a
+    `.md` href, a `[[wikilink]]`) is written back as authored (`wikilink_marker`). A surfaced page is editable whenever it has no *other* editable url to defer
     to: the repo-root README (served at `/`), CLAUDE, and AGENTS pages are inline-editable by
     this rule, while the generated index (no backing file) and the promoted docs-root
     `home`/`readme` `/`-alias — already editable at its own url — stay read-only.
