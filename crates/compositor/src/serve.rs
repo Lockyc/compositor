@@ -2324,3 +2324,176 @@ mod tests {
         std::fs::remove_dir_all(&tmp).ok();
     }
 }
+
+/// Sequences of saves, outside writes, outside deletes and rebuilds, driven
+/// through `handle_edit` and `rebuild_into` with no watcher, checked after
+/// every step against a model of the disk and the last-served snapshot.
+#[cfg(test)]
+mod edit_sequences {
+    use super::*;
+    use proptest::prelude::*;
+    use std::collections::BTreeMap;
+    use std::io::{Read, Write};
+    use std::net::{SocketAddr, TcpStream};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    /// Site url -> project-relative file: two docs pages and the repo-root
+    /// README served at `/` (the a7827cf shape).
+    const PAGES: [(&str, &str); 3] = [
+        ("a.html", "docs/a.md"),
+        ("b.html", "docs/b.md"),
+        ("index.html", "README.md"),
+    ];
+
+    #[derive(Clone, Debug)]
+    enum Op {
+        OutsideWrite(usize),
+        OutsideDelete(usize),
+        Rebuild,
+        /// `true` sends the served payload's source as the base; `false` a stale one.
+        Edit(usize, bool),
+    }
+
+    fn op() -> impl Strategy<Value = Op> {
+        prop_oneof![
+            (0..PAGES.len()).prop_map(Op::OutsideWrite),
+            (0..PAGES.len()).prop_map(Op::OutsideDelete),
+            Just(Op::Rebuild),
+            (0..PAGES.len(), any::<bool>()).prop_map(|(p, fresh)| Op::Edit(p, fresh)),
+        ]
+    }
+
+    /// The `#__editsrc` source each url serves, for the urls that carry one.
+    fn served(state: &RwLock<ServedSite>) -> BTreeMap<String, String> {
+        let s = state.read().unwrap();
+        let mut out = BTreeMap::new();
+        for (url, html) in &s.pages {
+            let open = r#"<script type="application/json" id="__editsrc">"#;
+            let Some(at) = html.find(open) else { continue };
+            let rest = &html[at + open.len()..];
+            let json = &rest[..rest.find("</script>").unwrap()];
+            let payload: serde_json::Value = serde_json::from_str(json).unwrap();
+            out.insert(url.clone(), payload["source"].as_str().unwrap().to_string());
+        }
+        out
+    }
+
+    fn post(addr: SocketAddr, body: &str) -> u16 {
+        let mut stream = TcpStream::connect(addr).unwrap();
+        let req = format!(
+            "POST /__edit HTTP/1.1\r\nHost: {addr}\r\nConnection: close\r\nContent-Length: {}\r\n\r\n{body}",
+            body.len()
+        );
+        stream.write_all(req.as_bytes()).unwrap();
+        let mut resp = String::new();
+        stream.read_to_string(&mut resp).unwrap();
+        resp.split(' ').nth(1).unwrap().parse().unwrap()
+    }
+
+    fn disk(tmp: &Path) -> BTreeMap<usize, Option<String>> {
+        (0..PAGES.len())
+            .map(|i| (i, std::fs::read_to_string(tmp.join(PAGES[i].1)).ok()))
+            .collect()
+    }
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(32))]
+
+        #[test]
+        fn saves_never_overwrite_or_resurrect_and_rebuilds_serve_the_disk(
+            ops in prop::collection::vec(op(), 1..=12)
+        ) {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let tmp = std::env::temp_dir().join(format!(
+                "compositor-editseq-{}-{}",
+                std::process::id(),
+                N.fetch_add(1, Ordering::Relaxed)
+            ));
+            let _ = std::fs::remove_dir_all(&tmp);
+            std::fs::create_dir_all(tmp.join("docs")).unwrap();
+            for (i, (_, file)) in PAGES.iter().enumerate() {
+                std::fs::write(tmp.join(file), format!("# P{i}\n\nstart\n")).unwrap();
+            }
+            let cfg = SiteConfig {
+                site_name: "T".to_string(),
+                docs_dir: Some("docs".to_string()),
+                ..Default::default()
+            };
+            let docs = tmp.join("docs");
+            let excluder = Arc::new(Excluder::new(&tmp, &docs, &[]));
+            let mut site = build_site(&docs, LinkPolicy::Lenient, &excluder, true).unwrap();
+            let (pages, root_assets, editable) =
+                build_pages(&cfg, &mut site, &tmp, 0, &excluder, true).unwrap();
+            let state = Arc::new(RwLock::new(ServedSite {
+                pages,
+                epoch: 0,
+                excluder,
+                root_assets,
+                editable,
+                edit_enabled: true,
+                loopback_bind: true,
+                out_dir: tmp.join("site"),
+            }));
+            let server = Arc::new(Server::http("127.0.0.1:0").unwrap());
+            let addr = server.server_addr().to_ip().unwrap();
+            let (s, st, d) = (Arc::clone(&server), Arc::clone(&state), docs.clone());
+            let thread = std::thread::spawn(move || serve_loop(&s, st, d));
+
+            // The model: what each file holds, and what each url last served.
+            let mut model_disk = disk(&tmp);
+            let mut model_served = served(&state);
+            prop_assert_eq!(model_served.len(), PAGES.len(), "every page carries an editor");
+
+            for (n, op) in ops.iter().enumerate() {
+                match *op {
+                    Op::OutsideWrite(i) => {
+                        let body = format!("# P{i}\n\noutside {n}\n");
+                        std::fs::write(tmp.join(PAGES[i].1), &body).unwrap();
+                        model_disk.insert(i, Some(body));
+                    }
+                    Op::OutsideDelete(i) => {
+                        let _ = std::fs::remove_file(tmp.join(PAGES[i].1));
+                        model_disk.insert(i, None);
+                    }
+                    Op::Rebuild => {
+                        rebuild_into(&state, &cfg, &docs, &tmp);
+                        model_served = served(&state);
+                        for (i, (url, _)) in PAGES.iter().enumerate() {
+                            prop_assert_eq!(
+                                model_served.get(*url),
+                                model_disk[&i].as_ref(),
+                                "after a rebuild {} serves its file as on disk",
+                                url
+                            );
+                        }
+                    }
+                    Op::Edit(i, fresh) => {
+                        let url = PAGES[i].0;
+                        let base = match (fresh, model_served.get(url)) {
+                            (true, Some(src)) => src.clone(),
+                            _ => format!("stale {n}\n"),
+                        };
+                        let source = format!("# P{i}\n\nedit {n}\n");
+                        let body = serde_json::json!({ "url": url, "source": source, "base": base });
+                        let status = post(addr, &body.to_string());
+                        let expected = if !model_served.contains_key(url) {
+                            403
+                        } else if model_disk[&i].as_deref() == Some(base.as_str()) {
+                            200
+                        } else {
+                            409
+                        };
+                        prop_assert_eq!(status, expected, "step {}: {:?} via {:?}", n, op, ops);
+                        if status == 200 {
+                            model_disk.insert(i, Some(source));
+                        }
+                    }
+                }
+                prop_assert_eq!(&disk(&tmp), &model_disk, "step {}: {:?} via {:?}", n, op, ops);
+            }
+            server.unblock();
+            thread.join().unwrap();
+            std::fs::remove_dir_all(&tmp).ok();
+        }
+    }
+}
