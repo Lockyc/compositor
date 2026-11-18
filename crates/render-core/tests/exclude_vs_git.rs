@@ -27,6 +27,7 @@ const ALPHABET: &[&str] = &[
     "keep.md",
     "sub/",
     "!sub/keep.md",
+    "docs/",
 ];
 
 /// Docs-relative files written to disk, so git sees real files and directories.
