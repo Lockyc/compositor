@@ -189,3 +189,95 @@ fn build_output_and_serve_agree_on_a_hostile_tree() {
     );
     fs::remove_dir_all(&base).ok();
 }
+
+/// What a browser encodes itself when it requests an href: everything but `%`,
+/// which it sends as written.
+const BROWSER: &AsciiSet = &CONTROLS
+    .add(b' ')
+    .add(b'"')
+    .add(b'<')
+    .add(b'>')
+    .add(b'`')
+    .add(b'{')
+    .add(b'}');
+
+/// The status serve answers for an `href` as a browser follows it: the path
+/// part before any `#fragment` or `?query`, with spaces and non-ASCII encoded.
+fn follow(port: u16, href: &str) -> (String, u16) {
+    let path = href.split(['#', '?']).next().unwrap_or("");
+    let decoded = percent_encoding::percent_decode_str(path)
+        .decode_utf8_lossy()
+        .into_owned();
+    let mut stream = TcpStream::connect(("127.0.0.1", port)).unwrap();
+    let req = format!(
+        "GET /{} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nConnection: close\r\n\r\n",
+        utf8_percent_encode(path, BROWSER)
+    );
+    stream.write_all(req.as_bytes()).unwrap();
+    let mut resp = Vec::new();
+    stream.read_to_end(&mut resp).unwrap();
+    let head = String::from_utf8_lossy(&resp[..resp.len().min(16)]).into_owned();
+    (decoded, head.split(' ').nth(1).unwrap().parse().unwrap())
+}
+
+fn html_unescape(s: &str) -> String {
+    s.replace("&quot;", "\"")
+        .replace("&#39;", "'")
+        .replace("&lt;", "<")
+        .replace("&gt;", ">")
+        .replace("&amp;", "&")
+}
+
+/// The href the nav gives the page titled `title`.
+fn nav_href(html: &str, title: &str) -> Option<String> {
+    let close = format!("\">{title}</a>");
+    let end = html.find(&close)?;
+    let start = html[..end].rfind("href=\"")? + "href=\"".len();
+    Some(html_unescape(&html[start..end]))
+}
+
+mod names {
+    use super::*;
+    use proptest::prelude::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    proptest! {
+        #![proptest_config(ProptestConfig::with_cases(24))]
+
+        /// For page names carrying spaces, non-ASCII, `%`, `#` and `?`, the nav
+        /// href, the file `build` writes and serve's 200 all name the same page.
+        #[test]
+        fn rendered_href_build_file_and_serve_line_up(
+            raw in prop::collection::vec("[a-zA-Z0-9 é中%#?_-]{1,8}", 1..5)
+        ) {
+            static N: AtomicUsize = AtomicUsize::new(0);
+            let proj = scratch(&format!("names-{}", N.fetch_add(1, Ordering::Relaxed)));
+            // Prefixed so no name is promoted to the home page, and deduped
+            // case-insensitively for a case-insensitive filesystem.
+            let mut seen = BTreeSet::new();
+            let names: Vec<String> = raw
+                .iter()
+                .map(|r| format!("p-{r}"))
+                .filter(|n| seen.insert(n.to_lowercase()))
+                .collect();
+            for (i, n) in names.iter().enumerate() {
+                write(&proj, &format!("{n}.md"), &format!("# Page{i}\n"));
+            }
+            run_build(&proj, LinkPolicy::Lenient).unwrap();
+            let index = fs::read_to_string(proj.join("site/index.html")).unwrap();
+            let handle = serve_handle_with(&proj, false).unwrap();
+            for (i, n) in names.iter().enumerate() {
+                let file = format!("{n}.html");
+                prop_assert!(proj.join("site").join(&file).is_file(), "build wrote {}", file);
+                let href = nav_href(&index, &format!("Page{i}"));
+                prop_assert!(href.is_some(), "nav links Page{} ({})", i, n);
+                let href = href.unwrap();
+                let (target, got) = follow(handle.port, &href);
+                prop_assert_eq!(&target, &file, "href {:?} names another file", href);
+                prop_assert_eq!(got, 200, "serve answered {} for href {:?}", got, href);
+            }
+            handle.shutdown();
+            fs::remove_dir_all(&proj).ok();
+        }
+    }
+}

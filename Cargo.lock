@@ -349,6 +349,7 @@ dependencies = [
  "clap",
  "notify",
  "percent-encoding",
+ "proptest",
  "render-core",
  "serde",
  "serde_json",

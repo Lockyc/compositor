@@ -3,7 +3,7 @@ use anyhow::Result;
 use askama::Template;
 use render_core::frontmatter::split_frontmatter;
 use render_core::markdown::{ImageResolver, TocEntry};
-use render_core::nav::{flatten, NavLink, NavNode, NavTree};
+use render_core::nav::{flatten, url_href, NavLink, NavNode, NavTree};
 use render_core::site::{render_page_source, Page, SiteModel};
 use render_core::LinkPolicy;
 use std::collections::HashSet;
@@ -90,12 +90,12 @@ pub fn render_page(
         body: &page.html,
         has_prev: prev.is_some(),
         prev_href: prev
-            .map(|l| format!("{prefix}{}", l.url))
+            .map(|l| format!("{prefix}{}", url_href(&l.url)))
             .unwrap_or_default(),
         prev_title: prev.map(|l| l.title.as_str()).unwrap_or_default(),
         has_next: next.is_some(),
         next_href: next
-            .map(|l| format!("{prefix}{}", l.url))
+            .map(|l| format!("{prefix}{}", url_href(&l.url)))
             .unwrap_or_default(),
         next_title: next.map(|l| l.title.as_str()).unwrap_or_default(),
     }
@@ -485,7 +485,7 @@ fn node_html(node: &NavNode, prefix: &str, current_url: &str, expand_all: bool, 
             };
             s.push_str(&format!(
                 "<li><a href=\"{}\"{}>{}</a></li>",
-                html_escape(&format!("{prefix}{url}")),
+                html_escape(&format!("{prefix}{}", url_href(url))),
                 current,
                 html_escape(title)
             ));

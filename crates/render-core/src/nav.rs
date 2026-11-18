@@ -14,6 +14,20 @@ pub enum NavNode {
 
 pub struct NavTree(pub Vec<NavNode>);
 
+/// What a browser must not read as syntax in a page url's path: a literal `#`
+/// starts a fragment, `?` a query, and `%` an escape. Spaces and non-ASCII stay
+/// literal; the browser encodes those itself.
+const HREF_RESERVED: &percent_encoding::AsciiSet =
+    &percent_encoding::CONTROLS.add(b'%').add(b'#').add(b'?');
+
+/// A site url (`a#b.html`, a file name as written) as an href path that names
+/// that file and nothing else (`a%23b.html`). Every href compositor writes for
+/// a page — nav, pager, wikilink — goes through this; a `#fragment` is appended
+/// after it.
+pub fn url_href(url: &str) -> String {
+    percent_encoding::utf8_percent_encode(url, HREF_RESERVED).to_string()
+}
+
 /// One page in linear reading order — the flattened nav, used to derive
 /// prev/next page links.
 pub struct NavLink {

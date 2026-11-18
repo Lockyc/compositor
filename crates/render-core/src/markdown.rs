@@ -487,7 +487,7 @@ fn plan_wikilink(
     let bare = label == raw_url;
 
     let make = |t: &WikiTarget| -> WikiAction {
-        let mut href = relative_url(page_dir, &t.url);
+        let mut href = crate::nav::url_href(&relative_url(page_dir, &t.url));
         if let Some(f) = frag {
             href.push('#');
             href.push_str(f);
