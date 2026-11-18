@@ -43,6 +43,18 @@ fmt:
 lint:
     cargo clippy --all-targets -- -D warnings
 
+# Mutation-test the path, write and output guards (occasional; one rebuild per mutant). Args narrow it: `just mutants --re edit_is_same_origin`
+[group("check")]
+mutants *args:
+    cargo mutants -o target -f crates/compositor/src/serve.rs -f crates/compositor/src/build.rs -f crates/render-core/src/exclude.rs {{args}}
+
+# Mutation-test only the lines changed since `base` (after an agent's change)
+[group("check")]
+mutants-diff base="origin/dev":
+    @mkdir -p target
+    git diff {{base}} > target/mutants.diff
+    cargo mutants -o target --in-diff target/mutants.diff
+
 # Non-mutating pre-merge gate: fmt check + clippy + tests
 [group("check")]
 gate: _node-deps
