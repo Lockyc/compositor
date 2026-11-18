@@ -67,7 +67,7 @@ impl Excluder {
         }
         // Lexical only — no disk access — so a `rel` that doesn't exist (an
         // on-demand asset request for a bogus URL) matches fine.
-        self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel), false)
+        self.is_ignored_under(&self.docs_dir.join(rel), false)
     }
 
     /// True when `rel` — a docs-dir-relative path to a **directory** — is kept
@@ -77,7 +77,7 @@ impl Excluder {
     pub fn is_excluded_dir(&self, rel: &Path) -> bool {
         in_git_dir(rel)
             || matches_patterns(rel, &self.patterns)
-            || self.is_ignored_under(&self.docs_dir, &self.docs_dir.join(rel), true)
+            || self.is_ignored_under(&self.docs_dir.join(rel), true)
     }
 
     /// True when an **absolute** path is hidden by a repo `.gitignore`.
@@ -99,7 +99,7 @@ impl Excluder {
         match &self.repo_root {
             Some(root) if abs.starts_with(root) => {
                 in_git_dir(abs.strip_prefix(root).unwrap_or(abs))
-                    || self.is_ignored_under(root, abs, false)
+                    || self.is_ignored_under(abs, false)
             }
             // Not a git repo, or a path outside it: nothing is ignored.
             _ => false,
@@ -107,18 +107,21 @@ impl Excluder {
     }
 
     /// Resolve `abs` against the matcher chain, applying git's directory-pruning
-    /// rule with `base` as the top of the walk.
+    /// rule from the repo root down.
     ///
     /// Git's rule: "it is not possible to re-include a file if a parent
     /// directory of that file is excluded." Once an ancestor directory is itself
     /// ignored, git prunes the walk right there — it never reads a nested
     /// `.gitignore` inside it and never honors a deeper `!negation`, for the
     /// directory or anything under it. Walk `abs`'s ancestor directories
-    /// shallow -> deep (`base`'s direct children down to the file's immediate
-    /// parent) so the same short-circuit applies here: the moment one resolves
-    /// to `Ignore`, the path is excluded regardless of what a nested rule would
-    /// say.
-    fn is_ignored_under(&self, base: &Path, abs: &Path, is_dir: bool) -> bool {
+    /// shallow -> deep (the repo root's direct children down to the file's
+    /// immediate parent) so the same short-circuit applies here: the moment one
+    /// resolves to `Ignore`, the path is excluded regardless of what a nested
+    /// rule would say.
+    fn is_ignored_under(&self, abs: &Path, is_dir: bool) -> bool {
+        let Some(base) = &self.repo_root else {
+            return false;
+        };
         let mut dirs: Vec<PathBuf> = Vec::new();
         let mut cur = abs.parent();
         while let Some(d) = cur {
@@ -139,18 +142,20 @@ impl Excluder {
         self.matched(abs, is_dir).unwrap_or(false)
     }
 
-    /// Resolves `abs` against the matcher chain, deepest-first, honoring the
-    /// first non-`None` result — git's own precedence. `Some(true)` = ignored,
-    /// `Some(false)` = explicitly whitelisted (`!negation`), `None` = no rule
-    /// matched anywhere in the chain.
+    /// Resolves `abs` itself — not its parents, which `is_ignored_under` walks —
+    /// against the matcher chain, deepest-first, honoring the first non-`None`
+    /// result — git's own precedence. `Some(true)` = ignored, `Some(false)` =
+    /// explicitly whitelisted (`!negation`), `None` = no rule matched anywhere in
+    /// the chain. A whitelisted parent directory (`!dir/`) says nothing about a
+    /// file under it, which a shallower `*.md` still ignores, so a parent match
+    /// must never stand in for the path's own.
     fn matched(&self, abs: &Path, is_dir: bool) -> Option<bool> {
         for gi in self.gitignores.iter().rev() {
-            // Skip matchers this path isn't under: `matched_path_or_any_parents`
-            // asserts the path is under the matcher root.
+            // A matcher governs only paths under its own directory.
             if !abs.starts_with(gi.path()) {
                 continue;
             }
-            match gi.matched_path_or_any_parents(abs, is_dir) {
+            match gi.matched(abs, is_dir) {
                 Match::Ignore(_) => return Some(true),
                 // An explicit `!negation` in the deepest matching file wins, as
                 // in git — stop, don't fall through to a shallower rule.

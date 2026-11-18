@@ -12,3 +12,6 @@ walkdir = "2"
 anyhow = "1"
 ignore = "0.4"
 percent-encoding = "2.3"
+
+[dev-dependencies]
+proptest = "=1.12.0"
