@@ -69,7 +69,7 @@ fn sibling(out: &Path, suffix: &str) -> PathBuf {
 /// True for `out` and for any `<out>.tmp-*` build scratch beside it, including one
 /// a killed build left behind. In a bare folder `out` sits inside the docs dir, so
 /// the asset walk must skip all of them or it copies a site into itself.
-fn is_build_output(path: &Path, out: &Path) -> bool {
+pub(crate) fn is_build_output(path: &Path, out: &Path) -> bool {
     if path.starts_with(out) {
         return true;
     }

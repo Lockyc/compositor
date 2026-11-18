@@ -39,6 +39,10 @@ pub(crate) struct ServedSite {
     /// `edit_enabled` (which an embedder may force off). A loopback site answers
     /// only loopback `Host` headers, so a DNS-rebound name can't read it.
     pub(crate) loopback_bind: bool,
+    /// Where `build` writes this site. In a bare folder it sits inside the docs
+    /// dir, so the on-demand asset branch skips it and its `<out>.tmp-*`
+    /// staging debris exactly as `build`'s asset copy does (`is_build_output`).
+    pub(crate) out_dir: PathBuf,
 }
 
 /// The client script, baselined at the epoch the page was built at (not the
@@ -533,10 +537,13 @@ fn handle(req: Request, state: &RwLock<ServedSite>, docs: &Path) {
     // never a path the `Excluder` hides — both `exclude` and gitignore rules hide
     // a tree from `build`, and serving it anyway on direct URL would defeat that,
     // especially with `serve --host 0.0.0.0`).
-    let excluder = Arc::clone(&state.read().expect("state lock").excluder);
+    let (excluder, out_dir) = {
+        let s = state.read().expect("state lock");
+        (Arc::clone(&s.excluder), s.out_dir.clone())
+    };
     if is_safe(&url) && !url.ends_with(".md") && !excluder.is_excluded(Path::new(&url)) {
         let asset = docs.join(&url);
-        if excluder.is_contained_file(&asset) {
+        if !crate::build::is_build_output(&asset, &out_dir) && excluder.is_contained_file(&asset) {
             if let Ok(bytes) = std::fs::read(&asset) {
                 respond(req, 200, content_type(&url), bytes);
                 return;
@@ -797,6 +804,7 @@ fn setup(project_dir: &Path, host: &str, port: Option<u16>, allow_edit: bool) ->
         editable,
         edit_enabled,
         loopback_bind: host_is_loopback(host),
+        out_dir: project_dir.join(cfg.out_dir()),
     }));
 
     let watcher = spawn_watcher(
@@ -1047,6 +1055,7 @@ mod tests {
             editable: HashMap::new(),
             edit_enabled: false,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }))
     }
 
@@ -1210,6 +1219,7 @@ mod tests {
             editable: HashMap::new(),
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1325,6 +1335,7 @@ mod tests {
             editable: HashMap::new(),
             edit_enabled: false,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
 
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
@@ -1370,6 +1381,7 @@ mod tests {
             editable,
             edit_enabled: false,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         });
         assert!(state.read().unwrap().pages["index.html"].contains("One"));
 
@@ -1594,6 +1606,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1709,6 +1722,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1755,6 +1769,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1804,6 +1819,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1838,6 +1854,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1884,6 +1901,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1931,6 +1949,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -1970,6 +1989,7 @@ mod tests {
             editable,
             edit_enabled: false,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -2008,6 +2028,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -2140,6 +2161,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
@@ -2231,6 +2253,7 @@ mod tests {
             editable,
             edit_enabled: true,
             loopback_bind: true,
+            out_dir: PathBuf::from("site"),
         }));
         let server = std::sync::Arc::new(tiny_http::Server::http("127.0.0.1:0").unwrap());
         let addr = server.server_addr().to_ip().unwrap();
