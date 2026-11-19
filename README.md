@@ -2,7 +2,7 @@
 
 [![Release](https://img.shields.io/github/v/release/lockyc/compositor?sort=semver&label=release)](https://github.com/lockyc/compositor/releases/latest)
 ![Platform](https://img.shields.io/badge/platform-macOS%20%7C%20Linux-555)
-[![Rust](https://img.shields.io/badge/rust-pinned%20(rust--toolchain.toml)-CE412B?logo=rust&logoColor=white)](rust-toolchain.toml)
+[![Rust](https://img.shields.io/badge/rust-1.97-CE412B?logo=rust&logoColor=white)](rust-toolchain.toml)
 [![License](https://img.shields.io/github/license/lockyc/compositor)](LICENSE)
 
 Turn a folder of Markdown into a themed, navigable docs site — no config file needed. Point it at
