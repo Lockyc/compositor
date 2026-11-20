@@ -1,11 +1,36 @@
-use serde::Deserialize;
+use serde_yaml_ng::Value;
 
-#[derive(Debug, Default, Deserialize)]
+#[derive(Debug, Default)]
 pub struct FrontMatter {
-    #[serde(default)]
     pub title: Option<String>,
-    #[serde(default)]
     pub aliases: Vec<String>,
+}
+
+/// A YAML scalar as text (`title: 2024` is a number to YAML, a title to the page).
+fn scalar(v: &Value) -> Option<String> {
+    match v {
+        Value::String(s) => Some(s.clone()),
+        Value::Number(n) => Some(n.to_string()),
+        Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+impl FrontMatter {
+    /// Each field read on its own, so one odd key never empties the others: `aliases` is a
+    /// list or a single scalar (Obsidian takes both), `title` any scalar.
+    fn from_yaml(yaml: &str) -> FrontMatter {
+        let Ok(Value::Mapping(map)) = serde_yaml_ng::from_str::<Value>(yaml) else {
+            return FrontMatter::default();
+        };
+        let title = map.get("title").and_then(scalar);
+        let aliases = match map.get("aliases") {
+            Some(Value::Sequence(items)) => items.iter().filter_map(scalar).collect(),
+            Some(v) => scalar(v).into_iter().collect(),
+            None => Vec::new(),
+        };
+        FrontMatter { title, aliases }
+    }
 }
 
 pub fn split_frontmatter(input: &str) -> (FrontMatter, String) {
@@ -25,7 +50,7 @@ pub fn split_frontmatter(input: &str) -> (FrontMatter, String) {
     };
     let yaml = &rest[..end];
     let body = &rest[end + close.len()..];
-    let fm = serde_yaml::from_str::<FrontMatter>(yaml).unwrap_or_default();
+    let fm = FrontMatter::from_yaml(yaml);
     (fm, body.to_string())
 }
 
@@ -72,6 +97,20 @@ mod tests {
         let (fm, body) = split_frontmatter(input);
         assert!(fm.title.is_none());
         assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn a_single_alias_and_a_numeric_title_both_read() {
+        let (fm, _) = split_frontmatter("---\ntitle: 2024\naliases: setup\n---\nbody");
+        assert_eq!(fm.title.as_deref(), Some("2024"));
+        assert_eq!(fm.aliases, vec!["setup".to_string()]);
+        let (fm, _) = split_frontmatter("---\ntitle: Setup\naliases: {odd: map}\n---\nbody");
+        assert_eq!(
+            fm.title.as_deref(),
+            Some("Setup"),
+            "an odd alias keeps the title"
+        );
+        assert!(fm.aliases.is_empty());
     }
 
     #[test]
