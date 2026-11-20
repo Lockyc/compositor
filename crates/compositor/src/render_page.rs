@@ -1,6 +1,7 @@
 use crate::config::SiteConfig;
 use anyhow::Result;
 use askama::Template;
+use render_core::admonitions::html_escape;
 use render_core::frontmatter::split_frontmatter;
 use render_core::markdown::{ImageResolver, TocEntry};
 use render_core::nav::{flatten, url_href, NavLink, NavNode, NavTree};
@@ -15,7 +16,9 @@ struct PageTemplate<'a> {
     page_title: &'a str,
     site_name: &'a str,
     home_href: String,
-    asset_prefix: String,
+    /// `assets::CSS_URL` / `JS_URL` under the page's depth prefix, so the template restates no path.
+    css_href: String,
+    js_href: String,
     nav_html: String,
     toc_html: String,
     has_toc: bool,
@@ -83,7 +86,8 @@ pub fn render_page(
         // The site name links back to the home page (`/`), relative to this
         // page's depth (the menu also carries a "Home" entry, see `nav_to_html`).
         home_href: format!("{prefix}index.html"),
-        asset_prefix: prefix.clone(),
+        css_href: format!("{prefix}{}", crate::assets::CSS_URL),
+        js_href: format!("{prefix}{}", crate::assets::JS_URL),
         nav_html: nav_to_html(nav, &prefix, &page.url, false),
         toc_html,
         has_toc,
@@ -510,13 +514,6 @@ fn node_html(node: &NavNode, prefix: &str, current_url: &str, expand_all: bool, 
             s.push_str("</ul></details></li>");
         }
     }
-}
-
-fn html_escape(s: &str) -> String {
-    s.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
 }
 
 #[cfg(test)]

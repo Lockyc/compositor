@@ -210,7 +210,8 @@ fn default_title(classes: &str) -> String {
     }
 }
 
-pub(crate) fn html_escape(s: &str) -> String {
+/// The one HTML escaper for text and attribute values, shared with compositor's nav and index.
+pub fn html_escape(s: &str) -> String {
     s.replace('&', "&amp;")
         .replace('<', "&lt;")
         .replace('>', "&gt;")
