@@ -322,12 +322,10 @@ fn req_header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
 /// preflight — so a hostile web page the user opens while `serve` is running
 /// could otherwise cross-origin `fetch` `http://127.0.0.1:PORT/__edit` and
 /// silently overwrite the served `.md` files. The loopback bind alone does not
-/// stop that: the browser, not the network, is the confused deputy. Policy:
+/// stop that: the browser, not the network, is the confused deputy. A
+/// DNS-rebinding page never reaches here: editing runs only on a loopback bind,
+/// where `handle` refuses every request whose `Host` is not loopback. Policy:
 ///
-/// - **`Host` must name loopback** whenever it is present. A DNS-rebinding
-///   page (a hostile name re-pointed at 127.0.0.1) is same-origin with
-///   *itself*, so it passes both header checks below; only the name it
-///   connected under — `Host` — betrays it.
 /// - **`Sec-Fetch-Site` is the cross-origin gate.** Modern browsers always
 ///   send it on `fetch`, so require `same-origin` or `none`; reject
 ///   `cross-site` / `same-site`.
@@ -336,9 +334,6 @@ fn req_header<'a>(req: &'a Request, name: &'static str) -> Option<&'a str> {
 /// - **None of these headers present** is a non-browser client (curl, a test,
 ///   the CLI) — already loopback-gated and legitimate — so allow it.
 fn edit_is_same_origin(req: &Request) -> bool {
-    if req_header(req, "Host").is_some_and(|host| !host_header_is_loopback(host)) {
-        return false;
-    }
     if let Some(site) = req_header(req, "Sec-Fetch-Site") {
         return site.eq_ignore_ascii_case("same-origin") || site.eq_ignore_ascii_case("none");
     }
