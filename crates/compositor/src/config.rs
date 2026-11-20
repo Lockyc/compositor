@@ -6,7 +6,10 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Deserialize, Default)]
 #[serde(deny_unknown_fields)]
 pub struct SiteConfig {
+    /// Empty when the file leaves it out; `load` fills it from the folder name.
+    #[serde(default)]
     pub site_name: String,
+    /// `None` when the file leaves it out; `load` fills it (`docs/` if present, else `.`).
     #[serde(default)]
     pub docs_dir: Option<String>,
     #[serde(default)]
@@ -30,48 +33,51 @@ pub struct SiteConfig {
 
 impl SiteConfig {
     /// Load `compositor.toml` from `project_dir`. A **missing** file is not an
-    /// error — defaults are synthesized so a bare directory of Markdown can be
-    /// built/served with no config at all. A file that exists but is unreadable
+    /// error, and neither is a key the file leaves out: both take the same
+    /// defaults (`with_defaults`), so adding a config file to a bare directory of
+    /// Markdown changes only what it sets. A file that exists but is unreadable
     /// or malformed is a hard, named error, so a typo is never silently ignored.
     pub fn load(project_dir: &Path) -> Result<SiteConfig> {
         let cfg_path = project_dir.join("compositor.toml");
-        match std::fs::read_to_string(&cfg_path) {
-            Ok(s) => toml::from_str(&s).with_context(|| format!("parsing {}", cfg_path.display())),
-            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
-                Ok(SiteConfig::synthesized(project_dir))
+        let cfg = match std::fs::read_to_string(&cfg_path) {
+            Ok(s) => {
+                toml::from_str(&s).with_context(|| format!("parsing {}", cfg_path.display()))?
             }
-            Err(e) => Err(e).with_context(|| format!("reading {}", cfg_path.display())),
-        }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => SiteConfig::default(),
+            Err(e) => return Err(e).with_context(|| format!("reading {}", cfg_path.display())),
+        };
+        Ok(cfg.with_defaults(project_dir))
     }
 
-    /// Defaults for a directory with no `compositor.toml`: the site name is the
-    /// humanized folder name, and the docs live in `docs/` if that subdir
-    /// exists, else the directory itself (a bare folder of Markdown).
-    fn synthesized(project_dir: &Path) -> SiteConfig {
-        // Canonicalize so `--dir .` resolves to the real folder name rather
-        // than "" — fall back to the path as given if it can't be resolved.
-        let named =
-            std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
-        let site_name = named
-            .file_name()
-            .and_then(|n| n.to_str())
-            .map(humanize_filename)
-            .filter(|s| !s.is_empty())
-            .unwrap_or_else(|| "Docs".to_string());
-        let docs_dir = if project_dir.join("docs").is_dir() {
-            "docs"
-        } else {
-            "."
-        };
-        SiteConfig {
-            site_name,
-            docs_dir: Some(docs_dir.to_string()),
-            ..Default::default()
+    /// Fill what the file left out: the site name is the humanized folder name,
+    /// and the docs live in `docs/` if that subdir exists, else the directory
+    /// itself (a bare folder of Markdown).
+    fn with_defaults(mut self, project_dir: &Path) -> SiteConfig {
+        if self.site_name.is_empty() {
+            // Canonicalize so `--dir .` resolves to the real folder name rather
+            // than "" — fall back to the path as given if it can't be resolved.
+            let named =
+                std::fs::canonicalize(project_dir).unwrap_or_else(|_| project_dir.to_path_buf());
+            self.site_name = named
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(humanize_filename)
+                .filter(|s| !s.is_empty())
+                .unwrap_or_else(|| "Docs".to_string());
         }
+        if self.docs_dir.is_none() {
+            let d = if project_dir.join("docs").is_dir() {
+                "docs"
+            } else {
+                "."
+            };
+            self.docs_dir = Some(d.to_string());
+        }
+        self
     }
 
     pub fn docs_dir(&self) -> &str {
-        self.docs_dir.as_deref().unwrap_or("docs")
+        self.docs_dir.as_deref().unwrap_or(".")
     }
 
     pub fn out_dir(&self) -> &str {
@@ -155,6 +161,22 @@ mod tests {
         let cfg = SiteConfig::load(&tmp).unwrap();
         assert_eq!(cfg.site_name, "Explicit");
         assert_eq!(cfg.docs_dir(), "content");
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn a_toml_that_omits_name_and_docs_dir_keeps_the_defaults() {
+        let tmp = scratch("partial");
+        std::fs::write(tmp.join("index.md"), "# Hi").unwrap();
+        std::fs::write(tmp.join("compositor.toml"), "exclude = [\"inbox/\"]\n").unwrap();
+        let cfg = SiteConfig::load(&tmp).unwrap();
+        assert_eq!(
+            cfg.site_name,
+            SiteConfig::default().with_defaults(&tmp).site_name
+        );
+        assert!(!cfg.site_name.is_empty());
+        assert_eq!(cfg.docs_dir(), ".", "no docs/ here, so the folder itself");
+        assert_eq!(cfg.exclude, vec!["inbox/".to_string()]);
         std::fs::remove_dir_all(&tmp).ok();
     }
 

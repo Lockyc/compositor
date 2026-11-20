@@ -64,14 +64,13 @@ compositor serve --dir path/to/docs-repo --open    # live-reload dev server
 
 ## Configuration
 
-A `compositor.toml` in `--dir` is optional. Without one, `site_name` comes from the folder name
-and the docs from `docs/` if it exists, else the directory itself. In a `compositor.toml`, an
-unknown key or a syntax or type error fails the run.
+A `compositor.toml` in `--dir` is optional, and so is every key in it. In a `compositor.toml`,
+an unknown key or a syntax or type error fails the run.
 
 | Key | Default | What it does |
 |---|---|---|
-| `site_name` | *required* when the file exists | Site title in the top bar and `<title>` |
-| `docs_dir` | `docs` | Docs tree to render, relative to `--dir` |
+| `site_name` | the folder name | Site title in the top bar and `<title>` |
+| `docs_dir` | `docs/` if present, else `--dir` | Docs tree to render, relative to `--dir` |
 | `out_dir` | `site` | Where `build` writes the rendered site |
 | `exclude` | `[]` | Docs-dir-relative path prefixes to skip, e.g. `["superpowers/"]` for a directory you keep in git but don't publish |
 | `surface_claude_md` | `true` | Show a repo-root `CLAUDE.md` as a top-level nav entry |
