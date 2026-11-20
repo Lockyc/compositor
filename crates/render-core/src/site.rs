@@ -152,6 +152,17 @@ pub fn build_site(
         if excluder.is_excluded(&rel) {
             continue;
         }
+        // A page is published only when it is a file inside the repo, the rule assets
+        // follow: a symlink to a file elsewhere would publish it, and on a loopback
+        // serve the editor would write through to it. A dangling link fails this too.
+        if !excluder.is_contained_file(path) {
+            let why = "not a file inside the repo (a symlink to a file elsewhere, or dangling)";
+            if policy == LinkPolicy::Lenient {
+                eprintln!("warning: skipping {}: {why}", rel.display());
+                continue;
+            }
+            anyhow::bail!("{}: {why}", rel.display());
+        }
         // Under Lenient (serve), one unreadable page — not UTF-8, or a dangling
         // symlink — is skipped with a warning, so it can't freeze every later
         // rebuild or stop serve starting. It is skipped rather than decoded lossily
@@ -290,6 +301,35 @@ mod tests {
         assert_eq!(site.pages.len(), 1, "only the readable page renders");
         assert!(build_site(&d, LinkPolicy::Strict, &ex, false).is_err());
         let _ = fs::remove_dir_all(&d);
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_page_symlinked_outside_the_repo_is_not_published() {
+        let d = scratch("page-escape");
+        let outside = scratch("page-escape-target");
+        write(&outside, "private.md", "# Private\n");
+        write(&d, "index.md", "# Home\n");
+        write(&d, "real.md", "# Real\n");
+        std::os::unix::fs::symlink(d.join("real.md"), d.join("alias.md")).unwrap();
+        std::os::unix::fs::symlink(outside.join("private.md"), d.join("notes.md")).unwrap();
+        let ex = Excluder::new(&d, &d, &[]);
+        let site = build_site(&d, LinkPolicy::Lenient, &ex, false).unwrap();
+        let urls: Vec<&str> = site.pages.iter().map(|p| p.url.as_str()).collect();
+        assert!(
+            urls.contains(&"alias.html"),
+            "an in-repo symlink publishes: {urls:?}"
+        );
+        assert!(
+            !urls.contains(&"notes.html"),
+            "an escaping symlink does not: {urls:?}"
+        );
+        let err = build_site(&d, LinkPolicy::Strict, &ex, false)
+            .err()
+            .unwrap();
+        assert!(err.to_string().contains("notes.md"), "got: {err}");
+        let _ = fs::remove_dir_all(&d);
+        let _ = fs::remove_dir_all(&outside);
     }
 
     #[test]

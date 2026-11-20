@@ -258,7 +258,10 @@ fn repo_readme_home(
 /// A top-level `*.md` file in `dir` whose stem equals `stem` (case-insensitive) —
 /// the one discovery function for the repo-root files compositor surfaces from
 /// outside the docs tree (`README.md` → home, `CLAUDE.md`/`AGENTS.md` → nav entry).
+/// A symlink counts only when its target is inside `dir` (`CLAUDE.md` → `AGENTS.md`
+/// does; a link to a file elsewhere would publish it).
 fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
+    let root = std::fs::canonicalize(dir).ok()?;
     std::fs::read_dir(dir)
         .ok()?
         .flatten()
@@ -269,6 +272,7 @@ fn find_repo_root_md(dir: &Path, stem: &str) -> Option<PathBuf> {
                 && p.file_stem()
                     .and_then(|s| s.to_str())
                     .is_some_and(|s| s.eq_ignore_ascii_case(stem))
+                && std::fs::canonicalize(p).is_ok_and(|t| t.starts_with(&root))
         })
 }
 
@@ -1343,5 +1347,27 @@ mod tests {
             "guides/advanced/config.html"
         ));
         assert!(!section_contains_url(&children, "nope.html"));
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_root_file_symlinked_outside_the_repo_is_not_found() {
+        let base = std::env::temp_dir().join(format!("cmp-rootmd-{}", std::process::id()));
+        let (repo, outside) = (base.join("repo"), base.join("outside"));
+        std::fs::create_dir_all(&repo).unwrap();
+        std::fs::create_dir_all(&outside).unwrap();
+        std::fs::write(repo.join("AGENTS.md"), "# a\n").unwrap();
+        std::fs::write(outside.join("private.md"), "# p\n").unwrap();
+        std::os::unix::fs::symlink(repo.join("AGENTS.md"), repo.join("CLAUDE.md")).unwrap();
+        std::os::unix::fs::symlink(outside.join("private.md"), repo.join("README.md")).unwrap();
+        assert!(
+            find_repo_root_md(&repo, "claude").is_some(),
+            "an in-repo link counts"
+        );
+        assert!(
+            find_repo_root_md(&repo, "readme").is_none(),
+            "an escaping link does not"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }
