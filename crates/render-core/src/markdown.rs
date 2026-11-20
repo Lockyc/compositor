@@ -251,12 +251,11 @@ fn rewrite_link(
     known: &HashSet<String>,
     policy: LinkPolicy,
 ) -> Result<Option<String>> {
-    // Skip external / anchor / non-.md links.
-    if url.starts_with("http://")
-        || url.starts_with("https://")
-        || url.starts_with("mailto:")
+    // Skip external (any scheme, or protocol-relative) and anchor links.
+    if url.starts_with("mailto:")
         || url.starts_with('#')
-        || !url.contains(".md")
+        || url.contains("://")
+        || url.starts_with("//")
     {
         return Ok(None);
     }
@@ -265,6 +264,10 @@ fn rewrite_link(
         Some((p, f)) => (p, Some(f)),
         None => (url, None),
     };
+    // Only a page link: `checksums.md5` or `report.mdx` is an asset, not a page.
+    if !path_part.ends_with(".md") {
+        return Ok(None);
+    }
     // Resolve relative to the page's directory, normalizing `..`/`.`, purely
     // to validate the link against the known (site-root-relative) urls.
     let joined = page_dir.join(path_part);
@@ -841,6 +844,35 @@ mod tests {
             &[],
         );
         w
+    }
+
+    #[test]
+    fn links_that_only_contain_md_are_not_page_links() {
+        for md in [
+            "[sums](checksums.md5)",
+            "[r](report.mdx)",
+            "[f](ftp://host/x.md)",
+            "[c](//cdn/x.md)",
+        ] {
+            let r = render_markdown(
+                md,
+                Path::new(""),
+                &HashSet::new(),
+                &WikiIndex::new(),
+                LinkPolicy::Strict,
+                &no_images(),
+            );
+            assert!(r.is_ok(), "{md}: {:?}", r.err());
+        }
+        let err = render_markdown(
+            "[g](gone.md)",
+            Path::new(""),
+            &HashSet::new(),
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &no_images(),
+        );
+        assert!(err.is_err(), "a real page link still has to resolve");
     }
 
     #[test]
