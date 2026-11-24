@@ -67,17 +67,6 @@ Not bugs that block use — conscious deferrals.
   probability on loopback with small payloads, but matters most to a host calling `Drop` on a UI
   thread.
 
-- **`rewrite_link` (`render-core/src/markdown.rs`) never percent-decodes
-  and only ever splits `#`, never `?`.** A link to a real file with a space —
-  `[link](my%20page.md)` pointing at `my page.md` — hard-fails a strict build
-  as an unresolvable link, even though the file exists. The image
-  path one function away does handle it: `resolve_image` in the same module
-  splits `#`/`?` off an image url and percent-decodes the remaining path
-  before resolving, and is the model to follow if this is ever fixed. Fixing it would
-  converge the two split sites, at which point a shared `(path, suffix)`
-  helper would earn its keep — today they genuinely diverge (`rewrite_link`
-  also does `.md`->`.html`), so they're deliberately not collapsed.
-
 ## Serve-mode inline editing
 
 - **The generated `/` index and the promoted docs-root `/`-alias are read-only.**

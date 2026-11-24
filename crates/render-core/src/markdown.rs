@@ -259,18 +259,14 @@ fn rewrite_link(
     {
         return Ok(None);
     }
-    // Split off any anchor fragment.
-    let (path_part, frag) = match url.split_once('#') {
-        Some((p, f)) => (p, Some(f)),
-        None => (url, None),
-    };
+    let (path_part, suffix, decoded) = split_url(url);
     // Only a page link: `checksums.md5` or `report.mdx` is an asset, not a page.
     if !path_part.ends_with(".md") {
         return Ok(None);
     }
     // Resolve relative to the page's directory, normalizing `..`/`.`, purely
     // to validate the link against the known (site-root-relative) urls.
-    let joined = page_dir.join(path_part);
+    let joined = page_dir.join(decoded);
     let normalized = normalize(&joined);
     let resolved_target = md_ext_to_html(&normalized.to_string_lossy());
     // The emitted href stays relative to the page (only the extension
@@ -290,10 +286,23 @@ fn rewrite_link(
             LinkPolicy::Lenient => {}
         }
     }
-    Ok(Some(match frag {
-        Some(f) => format!("{new_path}#{f}"),
-        None => new_path,
-    }))
+    Ok(Some(format!("{new_path}{suffix}")))
+}
+
+/// A relative url as `(path, suffix, decoded path)`: the suffix is everything from
+/// the first `#` or `?`, re-attached verbatim to whatever url is emitted, and the
+/// decoded path is the filesystem-relative lookup key. A Markdown author must
+/// percent-encode a filename with a space (or other reserved character) for the
+/// url to parse at all; a path that isn't valid percent-encoded UTF-8 is used
+/// as-is rather than failing resolution over an encoding quirk.
+fn split_url(url: &str) -> (&str, &str, String) {
+    let cut = url.find(['#', '?']).unwrap_or(url.len());
+    let (path, suffix) = url.split_at(cut);
+    let decoded = percent_encoding::percent_decode_str(path)
+        .decode_utf8()
+        .map(|s| s.into_owned())
+        .unwrap_or_else(|_| path.to_string());
+    (path, suffix, decoded)
 }
 
 /// What to do with one image url.
@@ -373,20 +382,7 @@ fn resolve_image(url: &str, page_dir: &Path, images: &dyn ImageResolver) -> Resu
     if is_external_image_url(url) {
         return Ok(None);
     }
-    // Split off any trailing #fragment or ?query (mirrors rewrite_link's anchor
-    // split above) so a resolver's lookup key is the bare path, then re-attach
-    // it verbatim onto a Rewrite so the emitted url keeps it.
-    let cut = url.find(['#', '?']).unwrap_or(url.len());
-    let (path_part, suffix) = url.split_at(cut);
-    // A Markdown author must percent-encode a filename with a space (or other
-    // reserved character) for the url to parse at all; every resolver's lookup
-    // key is a decoded filesystem-relative path, so decode before handing it
-    // over. A path that isn't valid percent-encoded UTF-8 is passed through
-    // as-is rather than failing resolution over an encoding quirk.
-    let decoded = percent_encoding::percent_decode_str(path_part)
-        .decode_utf8()
-        .map(|s| s.into_owned())
-        .unwrap_or_else(|_| path_part.to_string());
+    let (_, suffix, decoded) = split_url(url);
     match images.resolve(&decoded, page_dir)? {
         ImageResolution::Keep => Ok(None),
         ImageResolution::Rewrite(u) => Ok(Some(format!("{u}{suffix}"))),
@@ -873,6 +869,26 @@ mod tests {
             &no_images(),
         );
         assert!(err.is_err(), "a real page link still has to resolve");
+    }
+
+    #[test]
+    fn percent_encoded_page_link_resolves_and_keeps_its_suffix() {
+        let known: HashSet<String> = ["guide/my page.html".to_string()].into();
+        let r = render_markdown(
+            "[a](my%20page.md) [b](my%20page.md?v=1#top)",
+            Path::new("guide"),
+            &known,
+            &WikiIndex::new(),
+            LinkPolicy::Strict,
+            &no_images(),
+        )
+        .expect("a %20 link to a real page resolves under strict");
+        assert!(r.html.contains("href=\"my%20page.html\""), "{}", r.html);
+        assert!(
+            r.html.contains("href=\"my%20page.html?v=1#top\""),
+            "{}",
+            r.html
+        );
     }
 
     #[test]
