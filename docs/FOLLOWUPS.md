@@ -42,8 +42,8 @@ Not bugs that block use — conscious deferrals.
   - **`serve_handle` (embedded):** the loop is one background thread among N. A panic takes down that
     one site's server while the host still believes it is live. **Silent**, and the host cannot see it
     without checking.
-  A host embedding this must detect a dead serve thread rather than trust the handle
-  (lector drops its `live` dot on one). Defense-in-depth here: isolate each request (`catch_unwind`).
+  A host embedding this reads `ServeHandle::serving()` to detect a dead serve thread; a TCP probe
+  still connects to one. Defense-in-depth here: isolate each request (`catch_unwind`).
 
 - **The 404 page carries no live-reload script.** A tab showing a dead link's
   404 will not auto-reload when the missing file is later created (the *linking*

@@ -844,7 +844,7 @@ pub fn run_serve(project_dir: &Path, host: &str, port: Option<u16>, open: bool) 
 ///
 /// A returned handle means *bound*, not *fully healthy*: live-reload can be dead on arrival
 /// (the watcher failed to start) while the site still serves. Check [`ServeHandle::live_reload`]
-/// rather than treating a successful return as a live site.
+/// and [`ServeHandle::serving`] rather than treating a successful return as a live site.
 pub struct ServeHandle {
     /// The bound loopback port. Assigned by the OS (`:0`), so it is never "address in use".
     pub port: u16,
@@ -868,6 +868,17 @@ impl ServeHandle {
     pub fn live_reload(&self) -> bool {
         // A rebuild-thread panic ends the thread while the watcher handle is still held.
         self.watcher.as_ref().is_some_and(|(_, t)| !t.is_finished())
+    }
+
+    /// Whether the request loop is still answering for this site.
+    ///
+    /// `false` means the loop has exited (a panic while handling a request ends it). The port
+    /// still accepts connections — tiny_http's accept thread lives as long as this handle holds
+    /// the `Server` — but every request then hangs, so a TCP probe cannot tell a dead site from
+    /// a live one; a host reads this instead. Derived from the thread this handle owns, like
+    /// [`ServeHandle::live_reload`], and `false` once the handle is stopped.
+    pub fn serving(&self) -> bool {
+        self.serve_thread.as_ref().is_some_and(|t| !t.is_finished())
     }
 
     /// Stop serving and watching, and wait for both threads to exit.
@@ -1460,6 +1471,28 @@ mod tests {
             h.live_reload(),
             "a watchable docs tree must report live-reload running"
         );
+        h.shutdown();
+
+        std::fs::remove_dir_all(&tmp).ok();
+    }
+
+    #[test]
+    fn serve_handle_reports_a_dead_request_loop() {
+        // tiny_http's accept thread keeps taking connections while the handle holds the
+        // `Server`, so a TCP probe succeeds against a dead request loop; `serving()` must not.
+        let tmp = std::env::temp_dir().join(format!("compositor-serving-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(tmp.join("docs")).unwrap();
+        std::fs::write(tmp.join("docs/index.md"), "# Serving\n").unwrap();
+
+        let h = serve_handle(&tmp).expect("serve_handle binds");
+        assert!(h.serving(), "a fresh handle is serving");
+        h.server.as_ref().unwrap().unblock();
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(2);
+        while h.serving() && std::time::Instant::now() < deadline {
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
+        assert!(!h.serving(), "an exited request loop reports not serving");
         h.shutdown();
 
         std::fs::remove_dir_all(&tmp).ok();
