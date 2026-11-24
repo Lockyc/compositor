@@ -150,7 +150,7 @@ fn ensure_build_output(out: &Path) -> Result<()> {
 /// absolute path such as `"/"` (an absolute `out_dir` replaces the join
 /// outright), and `out_dir == docs_dir`. An absolute `out_dir` outside the
 /// project (`/var/www/site`) is legitimate and resolves to itself.
-fn resolve_out_dir(project_dir: &Path, docs: &Path, out_dir: &str) -> Result<PathBuf> {
+pub(crate) fn resolve_out_dir(project_dir: &Path, docs: &Path, out_dir: &str) -> Result<PathBuf> {
     if out_dir.trim().is_empty() {
         return Err(anyhow!("out_dir must not be empty"));
     }
