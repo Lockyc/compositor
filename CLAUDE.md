@@ -117,7 +117,7 @@ bug and "fixed" against the reasoning that deferred it.
 | Tree nav (tree model) | `render-core/src/nav.rs` |
 | Nav collapse/expand rendering | `compositor/src/render_page.rs` (`nav_to_html`, `node_html`, `section_contains_url`) |
 | `.gitignore` / `exclude` gating | `render-core/src/exclude.rs` |
-| Theme wrap, per-page TOC, prev/next pager | `compositor/src/render_page.rs` (`reading_order`) |
+| Theme wrap, the page set `build` and `serve` share, per-page TOC, prev/next pager | `compositor/src/render_page.rs` (`ThemedSite`, `reading_order`) |
 | Repo-root asset resolution | `compositor/src/root_assets.rs` (`RootAssets`) |
 | `serve`, live-reload, the embedding API | `compositor/src/serve.rs` (`setup`, `serve_handle`) |
 | Serve-mode inline editing (loopback only) | `compositor/src/serve.rs` (`inject_editor`, `/__edit`, `edit_enabled`), `compositor/assets/editor.js` |

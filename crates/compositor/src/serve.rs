@@ -1,5 +1,5 @@
 use crate::config::SiteConfig;
-use crate::render_page::render_page;
+use crate::render_page::{depth_prefix, ThemedSite};
 use anyhow::{anyhow, Result};
 use notify::RecommendedWatcher;
 use notify::{RecursiveMode, Watcher};
@@ -171,65 +171,42 @@ pub(crate) fn build_pages(
     HashMap<String, PathBuf>,
     HashMap<String, PathBuf>,
 )> {
-    let docs = cfg.docs_path(project_dir);
     // Always lenient: `serve` must never halt an unattended rebuild, so a dead
     // image degrades to a 404 exactly as a dead link does.
-    let images =
-        crate::root_assets::RootAssets::new(project_dir, &docs, excluder, LinkPolicy::Lenient);
-    // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
-    crate::render_page::surface_repo_agent_files(site, cfg, project_dir, &images, edit_enabled)?;
-    // A docs tree with no index.md still gets a working `/` (see `resolve_home`).
-    let home = crate::render_page::resolve_home(site, cfg, project_dir, &images, edit_enabled)?;
-    let order = crate::render_page::reading_order(&site.nav, home.as_ref());
+    let themed = ThemedSite::new(
+        cfg,
+        site,
+        project_dir,
+        excluder,
+        LinkPolicy::Lenient,
+        edit_enabled,
+    )?;
 
+    let mut pages = HashMap::new();
     let mut editable = HashMap::new();
-    if edit_enabled {
-        // Exactly the pages that carry an editor: `edit_source: Some`. The
-        // home page comes back from `resolve_home` *separately* from
-        // `site.pages`, so it must be chained in here or a future editable
-        // home (a repo-root README) could never enter the map. The write
-        // target is `EditSource.path` — the single source, addressing files
-        // both inside the docs dir and outside it (repo-root pages). Read-only
-        // pages (the generated index, the promoted docs-root `/`-alias) stay
-        // `edit_source: None` and never enter the map, so `/__edit` can never
-        // write a page that carries no editor.
-        for p in site.pages.iter().chain(home.as_ref()) {
-            if let Some(es) = &p.edit_source {
+    for (p, html) in themed.pages() {
+        let html = inject_reload(&html, epoch);
+        // Exactly the pages that carry an editor enter `editable`, written
+        // through `EditSource.path`, which addresses files both inside the docs
+        // dir and outside it (repo-root pages).
+        let html = match (&p.edit_source, edit_enabled) {
+            (Some(es), true) => {
                 editable.insert(p.url.clone(), es.path.clone());
+                let payload = EditPayload {
+                    url: &p.url,
+                    source: &es.source,
+                    fm_lines: es.fm_lines,
+                    line_map: &es.line_map,
+                };
+                let payload_json = serde_json::to_string(&payload)
+                    .expect("EditPayload has no non-serializable field");
+                inject_editor(&html, &payload_json, &depth_prefix(&p.url))
             }
-        }
+            _ => html,
+        };
+        pages.insert(p.url.clone(), html);
     }
-
-    let pages = site
-        .pages
-        .iter()
-        .chain(home.as_ref())
-        .map(|p| {
-            let (prev, next) = crate::render_page::neighbours(&order, &p.url);
-            let rendered = inject_reload(&render_page(cfg, &site.nav, p, prev, next), epoch);
-            let rendered = if edit_enabled {
-                if let Some(es) = &p.edit_source {
-                    let depth = p.url.matches('/').count();
-                    let asset_prefix = "../".repeat(depth);
-                    let payload = EditPayload {
-                        url: &p.url,
-                        source: &es.source,
-                        fm_lines: es.fm_lines,
-                        line_map: &es.line_map,
-                    };
-                    let payload_json = serde_json::to_string(&payload)
-                        .expect("EditPayload has no non-serializable field");
-                    inject_editor(&rendered, &payload_json, &asset_prefix)
-                } else {
-                    rendered
-                }
-            } else {
-                rendered
-            };
-            (p.url.clone(), rendered)
-        })
-        .collect();
-    Ok((pages, images.copies().into_iter().collect(), editable))
+    Ok((pages, themed.root_assets.into_iter().collect(), editable))
 }
 
 /// Map a request path to a site url: "" / "/" -> index.html, trailing "/" ->

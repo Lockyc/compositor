@@ -1,5 +1,5 @@
 use crate::config::SiteConfig;
-use crate::render_page::render_page;
+use crate::render_page::ThemedSite;
 use anyhow::{anyhow, Context, Result};
 use render_core::site::build_site;
 use render_core::{Excluder, LinkPolicy};
@@ -20,15 +20,8 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     // anything is written; an IO error later fails in staging (`swap_into_place`).
     // Either way a failed build leaves the last good site in place.
     let mut site = build_site(&docs, policy, &excluder, false)?;
-    // The two pages compositor renders from outside the docs tree resolve their
-    // images against the repo root; `images` records what must be copied.
-    let images = crate::root_assets::RootAssets::new(project_dir, &docs, &excluder, policy);
-    // Repo-root CLAUDE.md / AGENTS.md (outside the docs tree) surfaced as nav pages.
-    crate::render_page::surface_repo_agent_files(&mut site, &cfg, project_dir, &images, false)?;
-    // compositor owns the home page: a docs tree with no index.md still gets a
-    // working `/` (see `resolve_home`). `build` ships no edit scaffolding.
-    let home = crate::render_page::resolve_home(&site, &cfg, project_dir, &images, false)?;
-    let order = crate::render_page::reading_order(&site.nav, home.as_ref());
+    // `build` ships no edit scaffolding.
+    let themed = ThemedSite::new(&cfg, &mut site, project_dir, &excluder, policy, false)?;
 
     ensure_build_output(&out)?;
     let staging = sibling(&out, &format!("tmp-{}", std::process::id()));
@@ -36,9 +29,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
     let written = (|| -> Result<()> {
         std::fs::create_dir_all(&staging)
             .with_context(|| format!("creating {}", staging.display()))?;
-        for page in site.pages.iter().chain(home.as_ref()) {
-            let (prev, next) = crate::render_page::neighbours(&order, &page.url);
-            let html = render_page(&cfg, &site.nav, page, prev, next);
+        for (page, html) in themed.pages() {
             let dest = staging.join(&page.url);
             if let Some(parent) = dest.parent() {
                 std::fs::create_dir_all(parent)?;
@@ -46,7 +37,7 @@ pub fn run_build(project_dir: &Path, policy: LinkPolicy) -> Result<()> {
             std::fs::write(&dest, html)?;
         }
         copy_assets(&docs, &out, &staging, &excluder)?;
-        copy_root_assets(&staging, &images.copies())?;
+        copy_root_assets(&staging, &themed.root_assets)?;
         write_shell_assets(&staging)?;
         swap_into_place(&staging, &out)
     })();

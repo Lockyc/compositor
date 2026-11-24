@@ -1,4 +1,5 @@
 use crate::config::SiteConfig;
+use crate::root_assets::RootAssets;
 use anyhow::Result;
 use askama::Template;
 use render_core::admonitions::html_escape;
@@ -6,8 +7,8 @@ use render_core::frontmatter::split_frontmatter;
 use render_core::markdown::{ImageResolver, TocEntry};
 use render_core::nav::{flatten, url_href, NavLink, NavNode, NavTree};
 use render_core::site::{render_page_source, Page, SiteModel};
-use render_core::LinkPolicy;
-use std::collections::HashSet;
+use render_core::{Excluder, LinkPolicy};
+use std::collections::{BTreeMap, HashSet};
 use std::path::{Path, PathBuf};
 
 #[derive(Template)]
@@ -63,6 +64,62 @@ pub fn neighbours<'a>(
     }
 }
 
+/// A site's whole page set — the docs tree, the surfaced repo-root CLAUDE/AGENTS
+/// pages and the home — ready to theme, plus the repo-root assets those pages
+/// reference. The one page-set assembly `build` and `serve` share: they differ
+/// only in `policy`, `edit`, and what `serve` injects into each rendered page.
+pub struct ThemedSite<'a> {
+    cfg: &'a SiteConfig,
+    site: &'a SiteModel,
+    home: Option<Page>,
+    order: Vec<NavLink>,
+    /// Site url -> repo-root source file, for every asset a repo-root page
+    /// referenced from outside the docs tree (see `RootAssets`).
+    pub root_assets: BTreeMap<String, PathBuf>,
+}
+
+impl<'a> ThemedSite<'a> {
+    /// Surface the repo-root agent files into `site`, resolve the home, and fix the
+    /// reading order. Fails on a content error `policy` makes fatal.
+    pub fn new(
+        cfg: &'a SiteConfig,
+        site: &'a mut SiteModel,
+        project_dir: &Path,
+        excluder: &Excluder,
+        policy: LinkPolicy,
+        edit: bool,
+    ) -> Result<ThemedSite<'a>> {
+        let docs = cfg.docs_path(project_dir);
+        // The pages compositor renders from outside the docs tree resolve their
+        // images against the repo root; `images` records what must be copied.
+        let images = RootAssets::new(project_dir, &docs, excluder, policy);
+        surface_repo_agent_files(site, cfg, project_dir, &images, edit)?;
+        let home = resolve_home(site, cfg, project_dir, &images, edit)?;
+        let order = reading_order(&site.nav, home.as_ref());
+        Ok(ThemedSite {
+            cfg,
+            site,
+            home,
+            order,
+            root_assets: images.copies(),
+        })
+    }
+
+    /// Every page with its themed HTML, the home included.
+    pub fn pages(&self) -> impl Iterator<Item = (&Page, String)> {
+        self.site.pages.iter().chain(self.home.as_ref()).map(|p| {
+            let (prev, next) = neighbours(&self.order, &p.url);
+            (p, render_page(self.cfg, &self.site.nav, p, prev, next))
+        })
+    }
+}
+
+/// The prefix that makes a site-root-relative url relative to the page at `url`:
+/// one `../` per directory of depth in the page's own url.
+pub fn depth_prefix(url: &str) -> String {
+    "../".repeat(url.matches('/').count())
+}
+
 pub fn render_page(
     cfg: &SiteConfig,
     nav: &NavTree,
@@ -71,11 +128,8 @@ pub fn render_page(
     next: Option<&NavLink>,
 ) -> String {
     // Nav links are emitted site-root-relative (e.g. "cli/tar.html"), but the
-    // page being rendered may live in a subdirectory, so the links must be
-    // made relative to *this* page's location: one "../" per directory of
-    // depth in the current page's own url.
-    let depth = page.url.matches('/').count();
-    let prefix = "../".repeat(depth);
+    // page being rendered may live in a subdirectory.
+    let prefix = depth_prefix(&page.url);
 
     let toc_html = toc_to_html(&page.toc);
     let has_toc = !page.toc.is_empty();
