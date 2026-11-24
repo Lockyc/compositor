@@ -37,21 +37,28 @@ pub fn split_frontmatter(input: &str) -> (FrontMatter, String) {
     // Frontmatter must start on the very first line as `---`, with LF or CRLF
     // endings (a Windows-authored or autocrlf file). `body` stays a true suffix
     // of `input`, which the editor's frontmatter line count depends on.
-    let (rest, close) = if let Some(r) = input.strip_prefix("---\n") {
-        (r, "\n---\n")
+    // The block closes at the first line that is exactly `---`: the very next line
+    // for an empty block, or the last line of a file with no trailing newline.
+    let (rest, nl) = if let Some(r) = input.strip_prefix("---\n") {
+        (r, "\n")
     } else if let Some(r) = input.strip_prefix("---\r\n") {
-        (r, "\r\n---\r\n")
+        (r, "\r\n")
     } else {
         return (FrontMatter::default(), input.to_string());
     };
-    // Find the closing delimiter line.
-    let Some(end) = rest.find(close) else {
-        return (FrontMatter::default(), input.to_string());
-    };
-    let yaml = &rest[..end];
-    let body = &rest[end + close.len()..];
-    let fm = FrontMatter::from_yaml(yaml);
-    (fm, body.to_string())
+    let mut start = 0;
+    while start < rest.len() {
+        let (line, next) = match rest[start..].find(nl) {
+            Some(i) => (&rest[start..start + i], start + i + nl.len()),
+            None => (&rest[start..], rest.len()),
+        };
+        if line == "---" {
+            let fm = FrontMatter::from_yaml(&rest[..start]);
+            return (fm, rest[next..].to_string());
+        }
+        start = next;
+    }
+    (FrontMatter::default(), input.to_string())
 }
 
 #[cfg(test)]
@@ -120,6 +127,35 @@ mod tests {
         assert_eq!(fm.title.as_deref(), Some("Setup Guide"));
         assert_eq!(fm.aliases, vec!["setup".to_string(), "install".to_string()]);
         assert_eq!(body, "body");
+    }
+
+    #[test]
+    fn an_empty_block_strips_only_itself() {
+        let input = "---\n---\n# Title\ntext\n---\nmore";
+        let (fm, body) = split_frontmatter(input);
+        assert!(fm.title.is_none());
+        assert_eq!(body, "# Title\ntext\n---\nmore");
+        let input = "---\r\n---\r\n# Title\r\n---\r\nmore";
+        let (_, body) = split_frontmatter(input);
+        assert_eq!(body, "# Title\r\n---\r\nmore");
+    }
+
+    #[test]
+    fn a_closing_delimiter_at_end_of_file_closes_the_block() {
+        let (fm, body) = split_frontmatter("---\ntitle: X\n---");
+        assert_eq!(fm.title.as_deref(), Some("X"));
+        assert_eq!(body, "");
+        let (fm, body) = split_frontmatter("---\r\ntitle: X\r\n---");
+        assert_eq!(fm.title.as_deref(), Some("X"));
+        assert_eq!(body, "");
+    }
+
+    #[test]
+    fn an_unclosed_block_is_body() {
+        let input = "---\ntitle: X\nno close";
+        let (fm, body) = split_frontmatter(input);
+        assert!(fm.title.is_none());
+        assert_eq!(body, input);
     }
 
     #[test]

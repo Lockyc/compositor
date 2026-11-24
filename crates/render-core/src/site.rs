@@ -351,6 +351,16 @@ mod tests {
             "full source incl frontmatter"
         );
         assert_eq!(es.fm_lines, 3, "3 frontmatter lines stripped");
+
+        std::fs::write(tmp.join("empty.md"), "---\n---\n# E\n\npara\n").unwrap();
+        let site = build_site(&tmp, LinkPolicy::Lenient, &ex, true).unwrap();
+        let page = site.pages.iter().find(|p| p.url == "empty.html").unwrap();
+        let es = page.edit_source.as_ref().unwrap();
+        assert_eq!(
+            es.fm_lines, 2,
+            "an empty block strips its 2 delimiter lines"
+        );
+        assert_eq!(page.title, "E");
         // comrak stamped positions on the rendered blocks.
         assert!(page.html.contains("data-sourcepos"), "html: {}", page.html);
 
